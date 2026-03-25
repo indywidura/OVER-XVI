@@ -19,24 +19,38 @@ cluster = MongoClient(MONGO_URL)
 db = cluster["over_xvi_db"]
 collection = db["timeattack"]
 
-# --- FUNGSI HELPER UNTUK LEADERBOARD ---
+# --- FUNGSI HELPER UNTUK LEADERBOARD (VERSI FULL) ---
 def get_leaderboard_embed():
-    """Fungsi mandiri untuk mengambil data dan membuat embed leaderboard"""
-    results = list(collection.find().sort("waktu", 1).limit(10))
+    """Mengambil SEMUA data dari database tanpa batasan 10 besar"""
+    # Menghapus .limit(10) agar mengambil semua hasil
+    results = list(collection.find().sort("waktu", 1)) 
+    
     if not results:
-        return discord.Embed(title="⏱️ TIME ATTACK LEADERBOARD", description="Belum ada data. Klik tombol submit!", color=0xff0000)
+        return discord.Embed(
+            title="⏱️ TIME ATTACK LEADERBOARD", 
+            description="Belum ada data. Klik tombol submit!", 
+            color=0xff0000
+        )
 
     header = "RANK | NAME            | TIME\n"
     separator = "-----|-----------------|----------\n"
     table_content = ""
+    
     for i, row in enumerate(results, 1):
         name = row['user_name'][:15]
-        table_content += f"{i:<4} | {name:<15} | {row['waktu']}\n"
+        line = f"{i:<4} | {name:<15} | {row['waktu']}\n"
+        
+        # Proteksi agar tidak melebihi limit 2000 karakter Discord
+        if len(table_content) + len(line) > 1900:
+            table_content += "... dan seterusnya (Data terlalu panjang)"
+            break
+            
+        table_content += line
 
-    embed = discord.Embed(title="⏱️ TIME ATTACK LEADERBOARD", color=0x00ff00)
+    embed = discord.Embed(title="⏱️ FULL TIME ATTACK LEADERBOARD", color=0x00ff00)
     embed.description = f"```\n{header}{separator}{table_content}```"
+    embed.set_footer(text=f"Total Peserta: {len(results)}")
     return embed
-
 # --- KELAS MODAL ---
 class SubmitModal(ui.Modal, title='Submit Time Attack'):
     waktu_input = ui.TextInput(
