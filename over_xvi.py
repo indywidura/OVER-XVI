@@ -6,7 +6,7 @@ import datetime, asyncio, re, io, csv, threading, os
 from flask import Flask, jsonify
 
 # ================= CONFIG =================
-TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i8'
+TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GYDvg2.eKpkGIEGjhIpRC3IShXIutvkf6ppJvQDtkGKsw'
 MONGO_URL = "mongodb+srv://time-attack1:01010101@cluster0.smztndb.mongodb.net/?appName=Cluster0"
 
 bot = commands.Bot(
