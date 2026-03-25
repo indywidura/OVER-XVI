@@ -105,7 +105,7 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
             print(f"Error: {e}")
             await interaction.followup.send("⚠️ Terjadi kesalahan teknis.", ephemeral=True)
 
-# --- VIEW LEADERBOARD & PERSISTENT ---
+# --- VIEW LEADERBOARD (DENGAN TOMBOL NAVIGASI, EXPORT, DAN MENU) ---
 class LeaderboardPagination(ui.View):
     def __init__(self, page=1):
         super().__init__(timeout=60)
@@ -127,6 +127,24 @@ class LeaderboardPagination(ui.View):
             await self.update_view(interaction)
         else:
             await interaction.response.defer()
+
+    @ui.button(label='📊 Export CSV (Admin)', style=discord.ButtonStyle.green)
+    async def export(self, interaction, button):
+        # Mengecek izin administrator
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ Hanya Admin yang bisa mengunduh spreadsheet!", ephemeral=True)
+        
+        file = await export_to_csv()
+        if file:
+            await interaction.response.send_message("📂 File rekap leaderboard berhasil dibuat:", file=file, ephemeral=True)
+        else:
+            await interaction.response.send_message("⚠️ Data masih kosong.", ephemeral=True)
+
+    @ui.button(label='🏠 Menu', style=discord.ButtonStyle.red)
+    async def back_to_menu(self, interaction, button):
+        # Mengembalikan tampilan ke menu utama PersistentView
+        embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", description="Klik tombol di bawah untuk mendaftarkan rekor atau melihat peringkat.", color=0x2ecc71)
+        await interaction.response.edit_message(embed=embed, view=PersistentView())
 
     async def update_view(self, interaction):
         embed, _ = create_leaderboard_embed(self.page)
@@ -154,12 +172,15 @@ def create_leaderboard_embed(page=1):
 class PersistentView(ui.View):
     def __init__(self):
         super().__init__(timeout=None) 
+
     @ui.button(label='Submit Your Time', style=discord.ButtonStyle.green, custom_id='submit_btn')
     async def sub(self, interaction, button):
         await interaction.response.send_modal(SubmitModal())
+
     @ui.button(label='View Leaderboard', style=discord.ButtonStyle.grey, custom_id='leaderboard_btn')
     async def lb(self, interaction, button):
         embed, _ = create_leaderboard_embed(1)
+        # Pastikan menggunakan LeaderboardPagination agar tombol navigasi dan menu muncul
         await interaction.response.send_message(embed=embed, view=LeaderboardPagination(1), ephemeral=True)
 
 @bot.event
