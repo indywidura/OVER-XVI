@@ -4,7 +4,7 @@ from discord import ui
 from pymongo import MongoClient
 import datetime
 import math
-import asyncio
+import io
 
 # --- KONFIGURASI ---
 TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i8'
@@ -58,10 +58,10 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
     async def on_submit(self, interaction: discord.Interaction):
         user = interaction.user
         
-        # Pesan instruksi ini hanya dilihat oleh pengirim (EPHEMERAL)
+        # Ephemeral: Hanya pengirim yang melihat instruksi ini
         await interaction.response.send_message(
-            f"✅ **Data Terdaftar!** Sekarang kirimkan foto screenshot rekor Anda di channel ini.\n"
-            f"*Pesan Anda akan langsung dihapus otomatis oleh bot untuk menjaga kerapihan.*", 
+            f"✅ **Data Terdaftar!** Kirim screenshot rekor Anda sekarang di channel ini.\n"
+            f"*Gambar Anda akan diproses dan pesan aslinya akan dihapus.*", 
             ephemeral=True
         )
 
@@ -69,14 +69,14 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
             return m.author == user and m.channel == interaction.channel and len(m.attachments) > 0
 
         try:
-            # Menunggu kiriman gambar
             msg = await bot.wait_for('message', timeout=60.0, check=check)
-            
-            # AMBIL FILE SEBAGAI PROXY (Trik agar gambar tidak hilang saat pesan dihapus)
             attachment = msg.attachments[0]
-            image_url = attachment.url
             
-            # Simpan data ke database
+            # SOLUSI UTAMA: Mengunduh gambar ke memory agar tidak hilang saat pesan dihapus
+            image_bytes = await attachment.read()
+            file_name = attachment.filename
+            
+            # Simpan data
             collection.update_one(
                 {"_id": user.id},
                 {
@@ -91,30 +91,31 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
                 upsert=True
             )
 
-            # KIRIM EMBED PUBLIK (Terlihat semua orang)
+            # Hapus pesan asli user segera
+            try:
+                await msg.delete()
+            except:
+                pass
+
+            # Kirim Embed publik dengan Re-Upload File
             embed = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
             embed.add_field(name="👤 Peserta", value=f"**{self.ign_input.value}**", inline=True)
             embed.add_field(name="🛡️ Club", value=self.club_input.value, inline=True)
             embed.add_field(name="🆔 ID Game", value=self.id_input.value, inline=False)
             embed.add_field(name="⏱️ Waktu", value=f"`{self.waktu_input.value}`", inline=False)
             
-            # Pasang gambar
-            embed.set_image(url=image_url)
+            # Mengirimkan kembali file gambar secara resmi dari bot
+            file = discord.File(io.BytesIO(image_bytes), filename=file_name)
+            embed.set_image(url=f"attachment://{file_name}")
             embed.set_footer(text=f"Submitter: {user.display_name}")
             
-            await interaction.channel.send(embed=embed)
+            await interaction.channel.send(file=file, embed=embed)
 
-            # HAPUS PESAN ASLI USER (Agar tidak menumpuk)
-            await asyncio.sleep(0.5) # Jeda sebentar saja
-            try:
-                await msg.delete()
-            except:
-                pass
+        except Exception as e:
+            print(f"Error: {e}")
+            await interaction.followup.send("⚠️ Terjadi kesalahan atau waktu habis.", ephemeral=True)
 
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⚠️ Waktu upload habis (60 detik). Silakan ulangi submit.", ephemeral=True)
-
-# --- SISANYA TETAP SAMA ---
+# --- SISTEM NAVIGASI ---
 class LeaderboardPagination(ui.View):
     def __init__(self, current_page=1):
         super().__init__(timeout=60)
@@ -155,7 +156,7 @@ async def on_ready():
 @bot.command()
 async def setup_ta(ctx):
     embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
-    embed.description = "Daftarkan waktu terbaikmu dengan menekan tombol di bawah."
+    embed.description = "Gunakan tombol di bawah untuk berpartisipasi."
     await ctx.send(embed=embed, view=PersistentView())
 
 @bot.command()
@@ -163,7 +164,7 @@ async def setup_ta(ctx):
 async def del_ta(ctx, *, ign_name: str):
     result = collection.delete_one({"ign": {"$regex": f"^{ign_name}$", "$options": "i"}})
     if result.deleted_count > 0:
-        await ctx.send(f"🗑️ Data IGN **{ign_name}** dihapus.")
+        await ctx.send(f"🗑️ Data **{ign_name}** dihapus.")
     else:
         await ctx.send(f"❓ IGN tidak ditemukan.")
 
