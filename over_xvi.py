@@ -24,10 +24,7 @@ def parse_time(t):
     except: return None
 
 def is_on_cooldown(member, seconds=10):
-    """Cek cooldown, abaikan jika user adalah Admin"""
-    if member.guild_permissions.administrator:
-        return False, 0
-        
+    if member.guild_permissions.administrator: return False, 0
     now = datetime.datetime.now()
     if member.id in user_cooldowns:
         diff = (now - user_cooldowns[member.id]).total_seconds()
@@ -35,17 +32,17 @@ def is_on_cooldown(member, seconds=10):
     user_cooldowns[member.id] = now
     return False, 0
 
-# ================= ADMIN COMPONENTS =================
-
+# ================= ADMIN MODALS =================
 class DeletePlayerModal(ui.Modal, title="Hapus Data Player"):
-    target = ui.TextInput(label="IGN atau User ID", placeholder="Masukkan Nama atau ID...")
+    target = ui.TextInput(label="IGN atau User ID", placeholder="Masukkan IGN atau ID Discord...")
 
     async def on_submit(self, i: discord.Interaction):
         target_val = self.target.value
         query = {"$or": [{"ign": target_val}, {"user_id": int(target_val) if target_val.isdigit() else 0}]}
         result = col.delete_many(query)
-        await i.response.send_message(f"🗑️ Berhasil menghapus {result.deleted_count} data: **{target_val}**", ephemeral=True)
+        await i.response.send_message(f"✅ Berhasil menghapus {result.deleted_count} data player: **{target_val}**", ephemeral=True)
 
+# ================= VIEWS =================
 class AdminMenuView(ui.View):
     def __init__(self, event_name):
         super().__init__(timeout=60)
@@ -54,7 +51,7 @@ class AdminMenuView(ui.View):
     @ui.button(label="📥 Spreadsheet (CSV)", style=discord.ButtonStyle.green)
     async def download_sheet(self, i: discord.Interaction, b: ui.Button):
         data = list(col.find({"event": self.event_name}).sort("waktu_raw", 1))
-        if not data: return await i.response.send_message("❌ Data kosong.", ephemeral=True)
+        if not data: return await i.response.send_message("❌ Database kosong untuk channel ini.", ephemeral=True)
         
         output = io.StringIO()
         writer = csv.writer(output)
@@ -63,23 +60,22 @@ class AdminMenuView(ui.View):
             writer.writerow([idx+1, d['ign'], f"'{d.get('game_id','-')}", d.get('club','-'), d['waktu'], d.get('submitter','-'), d.get('last_submit','-')])
         
         output.seek(0)
-        file = discord.File(io.BytesIO(output.getvalue().encode()), filename=f"Report_{self.event_name}.csv")
-        await i.response.send_message(f"✅ Data channel **#{self.event_name}**:", file=file, ephemeral=True)
+        file_data = io.BytesIO(output.getvalue().encode())
+        file = discord.File(file_data, filename=f"Data_Report_{self.event_name}.csv")
+        await i.response.send_message(f"✅ Spreadsheet data untuk **#{self.event_name}**:", file=file, ephemeral=True)
 
     @ui.button(label="👤 Hapus Player", style=discord.ButtonStyle.grey)
     async def del_player(self, i: discord.Interaction, b: ui.Button):
         await i.response.send_modal(DeletePlayerModal())
 
-    @ui.button(label="🗑️ Reset Channel", style=discord.ButtonStyle.danger)
+    @ui.button(label="🗑️ Reset Reset Channel Ini", style=discord.ButtonStyle.danger)
     async def reset_event(self, i: discord.Interaction, b: ui.Button):
         col.delete_many({"event": self.event_name})
-        await i.response.send_message(f"⚠️ Seluruh rekor di **#{self.event_name}** telah dibersihkan!", ephemeral=True)
+        await i.response.send_message(f"⚠️ Seluruh data rekor di channel **#{self.event_name}** telah dihapus!", ephemeral=True)
 
     @ui.button(label="⬅️ Kembali", style=discord.ButtonStyle.secondary)
     async def back(self, i: discord.Interaction, b: ui.Button):
         await i.response.edit_message(content="🏎️ **PANEL UTAMA**", embed=None, view=MainView())
-
-# ================= USER VIEWS =================
 
 class LeaderboardView(ui.View):
     def __init__(self, data, event_name, page=0):
@@ -96,7 +92,7 @@ class LeaderboardView(ui.View):
             pos = start + idx
             rank = medals[pos] if pos < 3 else f"{pos+1}."
             desc += f"{rank} **{d['ign']}** - `{d['waktu']}`\n"
-        embed = discord.Embed(title=f"🏆 LEADERBOARD: #{self.event_name}", description=desc or "Kosong", color=0xf1c40f)
+        embed = discord.Embed(title=f"🏆 LEADERBOARD: #{self.event_name}", description=desc or "*Belum ada rekor*", color=0xf1c40f)
         total_p = (len(self.data)-1)//self.per_page + 1 if self.data else 1
         embed.set_footer(text=f"Halaman {self.page+1}/{total_p}")
         return embed
@@ -121,35 +117,67 @@ class LeaderboardView(ui.View):
 
 # ================= SUBMIT MODAL =================
 class SubmitModal(ui.Modal, title="Submit Time"):
-    ign = ui.TextInput(label="IGN", placeholder="Nickname game")
+    ign = ui.TextInput(label="IGN", placeholder="Nickname game kamu")
+    club = ui.TextInput(label="Club", placeholder="Nama Club kamu")
     game_id = ui.TextInput(label="ID Game", placeholder="Contoh: 666666666")
-    club = ui.TextInput(label="Club", placeholder="Nama Club")
-    time_val = ui.TextInput(label="Time (MM:SS.ms)", placeholder="00:46.000")
+    time_val = ui.TextInput(label="Time (MM:SS.ms)", placeholder="Contoh: 00:46.000")
 
     async def on_submit(self, i: discord.Interaction):
         sec = parse_time(self.time_val.value)
-        if sec is None:
-            return await i.response.send_message("❌ Format salah!", ephemeral=True)
+        if sec is None or sec < 10:
+            return await i.response.send_message("❌ Format waktu salah! Wajib `00:00.000` dan minimal 10 detik.", ephemeral=True)
 
         event_name = i.channel.name
-        await i.response.send_message("📸 Kirim screenshot hasil balapan.", ephemeral=True)
+        await i.response.send_message("📸 Upload screenshot hasil balapan kamu sekarang.", ephemeral=True)
 
         def check(m): return m.author.id == i.user.id and m.attachments
         try:
             msg = await bot.wait_for("message", timeout=60, check=check)
             img = await msg.attachments[0].read()
-            try: await msg.delete()
+            try: await msg.delete() # Hapus pesan screenshot user
             except: pass
 
-            data = {"user_id": i.user.id, "event": event_name, "ign": self.ign.value, "club": self.club.value, "game_id": self.game_id.value, "waktu": self.time_val.value, "waktu_raw": sec, "submitter": i.user.display_name, "last_submit": datetime.datetime.now()}
+            data = {
+                "user_id": i.user.id, 
+                "event": event_name, 
+                "ign": self.ign.value, 
+                "club": self.club.value, 
+                "game_id": self.game_id.value, 
+                "waktu": self.time_val.value, 
+                "waktu_raw": sec, 
+                "submitter": i.user.display_name, 
+                "last_submit": datetime.datetime.now()
+            }
             col.update_one({"user_id": i.user.id, "event": event_name}, {"$set": data}, upsert=True)
 
+            # --- TAMPILAN OUTPUT BARU (PERSIS GAMBAR 1) ---
             embed = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
-            embed.add_field(name="👤 Peserta", value=f"**{self.ign.value}**", inline=True)
-            embed.add_field(name="⏱️ Waktu", value=f"`{self.time_val.value}`", inline=True)
-            embed.set_footer(text=f"Event: {event_name}")
-            await i.channel.send(file=discord.File(io.BytesIO(img), "res.png"), embed=embed)
-        except: pass
+            
+            # Field Peserta (User)
+            embed.add_field(name="👤 Peserta", value=f"**{self.ign.value}**", inline=False)
+            
+            # Field Club (🛡️) - DIKEMBALIKAN
+            embed.add_field(name="🛡️ Club", value=self.club.value, inline=False)
+            
+            # Field ID Game (🆔) - DIKEMBALIKAN
+            embed.add_field(name="🆔 ID Game", value=self.game_id.value, inline=False)
+            
+            # Field Waktu (⏱️)
+            embed.add_field(name="⏱️ Waktu", value=f"`{self.time_val.value}`", inline=False)
+            
+            # Footer & Image
+            embed.set_footer(text=f"Submitter: {i.user.display_name}")
+            
+            # Menampilkan file gambar di embed
+            file = discord.File(io.BytesIO(img), filename="result.png")
+            embed.set_image(url="attachment://result.png")
+            
+            await i.channel.send(file=file, embed=embed)
+            
+        except asyncio.TimeoutError:
+            await i.followup.send("❌ Waktu upload (60 detik) habis.", ephemeral=True)
+        except Exception as e:
+            print(f"Error: {e}")
 
 # ================= MAIN UI =================
 class MainView(ui.View):
@@ -157,7 +185,6 @@ class MainView(ui.View):
 
     @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_sub")
     async def sub(self, i: discord.Interaction, b: ui.Button):
-        # Admin Bypass Anti-Spam
         on_cd, rem = is_on_cooldown(i.user, 10)
         if on_cd: return await i.response.send_message(f"⏳ Cooldown! Tunggu {rem} detik.", ephemeral=True)
         await i.response.send_modal(SubmitModal())
@@ -172,7 +199,7 @@ class MainView(ui.View):
         if not i.user.guild_permissions.administrator:
             return await i.response.send_message("🚫 Khusus Admin!", ephemeral=True)
         
-        embed = discord.Embed(title="🛠️ PANEL ADMIN", description=f"Manajemen: **#{i.channel.name}**", color=0x34495e)
+        embed = discord.Embed(title="🛠️ PANEL ADMIN", description=f"Manajemen data channel: **#{i.channel.name}**", color=0x34495e)
         await i.response.edit_message(content=None, embed=embed, view=AdminMenuView(i.channel.name))
 
 # ================= COMMANDS =================
