@@ -21,40 +21,41 @@ cluster = MongoClient(MONGO_URL)
 db = cluster["over_xvi_db"]
 collection = db["timeattack"]
 
-# --- FUNGSI EKSPOR CSV RAPI ---
+# --- FUNGSI EKSPOR CSV RAPI (FIX CHARACTER ERROR) ---
 async def export_to_csv():
     results = list(collection.find().sort("waktu", 1))
     if not results:
         return None
 
     output = io.StringIO()
-    # Menggunakan excel dialect untuk kompatibilitas tinggi
-    writer = csv.writer(output, dialect='excel')
+    writer = csv.writer(output, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
     
-    # Header kolom yang bersih
-    writer.writerow(['RANK', 'NAMA PEMAIN (IGN)', 'ID GAME', 'NAMA CLUB', 'REKOR WAKTU', 'WAKTU SUBMIT'])
+    # Header kolom
+    writer.writerow(['RANK', 'NAMA PEMAIN', 'ID GAME', 'NAMA CLUB', 'REKOR WAKTU', 'WAKTU SUBMIT'])
     
     for i, row in enumerate(results, 1):
-        # Format tanggal Indonesia (Contoh: 25 Mar 2026, 13:00)
         submit_time = row.get('last_submit')
         if isinstance(submit_time, datetime.datetime):
             formatted_date = submit_time.strftime("%d %b %Y, %H:%M")
         else:
             formatted_date = "N/A"
 
+        # Mengambil IGN asli tanpa merusak simbol unik
+        ign = row.get('ign', 'N/A')
+
         writer.writerow([
             f"#{i}", 
-            row.get('ign', 'N/A'), 
-            f"'{row.get('game_id', 'N/A')}", # Tanda kutip agar ID Game tidak berubah jadi angka ilmiah
+            ign, 
+            f"ID: {row.get('game_id', 'N/A')}", # Menghindari error angka ilmiah di Excel
             row.get('club', 'N/A'), 
             row.get('waktu', 'N/A'),
             formatted_date
         ])
     
     output.seek(0)
-    # PENTING: utf-8-sig agar simbol IGN tidak berantakan di Excel/Sheets
-    file_data = output.getvalue().encode('utf-8-sig')
-    return discord.File(io.BytesIO(file_data), filename=f"REKAP_TA_{datetime.date.today()}.csv")
+    # PENTING: utf-8-sig untuk menghilangkan karakter ï»¿ dan memperbaiki simbol â
+    final_output = output.getvalue().encode('utf-8-sig')
+    return discord.File(io.BytesIO(final_output), filename=f"REKAP_TA_FIXED_{datetime.date.today()}.csv")
 
 # --- LEADERBOARD ---
 def create_leaderboard_embed(page=1):
@@ -103,7 +104,7 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
             msg = await bot.wait_for('message', timeout=60.0, check=check)
             attachment = msg.attachments[0]
             
-            # Re-upload gambar agar tidak rusak saat pesan dihapus
+            # Re-upload gambar agar tidak hilang saat pesan asli dihapus
             image_bytes = await attachment.read()
             file_name = attachment.filename
             
@@ -139,9 +140,9 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
 
         except Exception as e:
             print(f"Error: {e}")
-            await interaction.followup.send("⚠️ Terjadi kesalahan.", ephemeral=True)
+            await interaction.followup.send("⚠️ Terjadi kesalahan atau waktu habis.", ephemeral=True)
 
-# --- NAVIGASI ---
+# --- NAVIGASI & ADMIN ---
 class LeaderboardPagination(ui.View):
     def __init__(self, current_page=1):
         super().__init__(timeout=60)
@@ -167,7 +168,7 @@ class LeaderboardPagination(ui.View):
             return await interaction.response.send_message("❌ Khusus Admin.", ephemeral=True)
         file = await export_to_csv()
         if file:
-            await interaction.response.send_message("📂 Data rekap siap digunakan:", file=file, ephemeral=True)
+            await interaction.response.send_message("📂 Data rekap siap digunakan (FIXED ENCODING):", file=file, ephemeral=True)
         else:
             await interaction.response.send_message("❌ Belum ada data.", ephemeral=True)
 
@@ -197,4 +198,14 @@ async def setup_ta(ctx):
     embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
     await ctx.send(embed=embed, view=PersistentView())
 
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def del_ta(ctx, *, ign_name: str):
+    result = collection.delete_one({"ign": {"$regex": f"^{ign_name}$", "$options": "i"}})
+    if result.deleted_count > 0:
+        await ctx.send(f"🗑️ Data **{ign_name}** dihapus.")
+    else:
+        await ctx.send(f"❓ IGN tidak ditemukan.")
+
+bot.run(TOKEN)
 bot.run(TOKEN)
