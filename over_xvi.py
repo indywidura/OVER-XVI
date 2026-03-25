@@ -9,16 +9,17 @@ BOT_NAME = "OVER-XVI"
 # Setting hak akses bot (Intents)
 intents = discord.Intents.default()
 intents.message_content = True  # Agar bot bisa membaca perintah pesan
+intents.members = True          # <--- Tambahkan juga ini agar aman
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 # --- DATA CONTOH (Bisa diubah sesuai kebutuhan) ---
 leaderboard_data = [
-    {"rank": "🥇", "nama": "RFF Junior", "waktu": "00:07.458"},
-    {"rank": "🥈", "nama": "RFF Fullmoon", "waktu": "00:09.458"},
-    {"rank": "🥉", "nama": "NandaBZIR·RFF", "waktu": "00:10.458"},
-    {"rank": "#4", "nama": "NyuakSukaTembok", "waktu": "00:11.469"},
-    {"rank": "#5", "nama": "gerrald", "waktu": "00:19.458"},
+    {"rank": "🥇", "nama": "player 1", "waktu": "00:07.458"},
+    {"rank": "🥈", "nama": "player 2", "waktu": "00:09.458"},
+    {"rank": "🥉", "nama": "player 3", "waktu": "00:10.458"},
+    {"rank": "#4", "nama": "player 4", "waktu": "00:11.469"},
+    {"rank": "#5", "nama": "player 5", "waktu": "00:19.458"},
 ]
 
 @bot.event
