@@ -2,14 +2,18 @@ import discord
 from discord.ext import commands
 from discord import ui
 from pymongo import MongoClient
-import datetime, asyncio, re, io, csv, threading
+import datetime, asyncio, re, io, csv, threading, os
 from flask import Flask, jsonify
 
 # ================= CONFIG =================
 TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i8'
 MONGO_URL = "mongodb+srv://time-attack1:01010101@cluster0.smztndb.mongodb.net/?appName=Cluster0"
 
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+bot = commands.Bot(
+    command_prefix="!",
+    intents=discord.Intents.all(),
+    help_command=None  # ✅ FIX ERROR HELP
+)
 
 db = MongoClient(MONGO_URL)["over_xvi_db"]
 col = db["timeattack"]
@@ -36,7 +40,8 @@ def event_lb(name):
     ])
 
 def run_web():
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))  # ✅ FIX RAILWAY
+    app.run(host="0.0.0.0", port=port)
 
 # ================= HELPER =================
 def parse_time(t):
@@ -48,44 +53,38 @@ def parse_time(t):
 
 def clean(x): return x if x else "N/A"
 
-# ================= HELP EMBED =================
+# ================= HELP =================
 def help_embed():
     return discord.Embed(
         title="📖 COMMAND LIST",
         description="""
-🏎️ **User Commands**
-!ta → Buka panel utama
-Submit Button → Kirim waktu
-Leaderboard → Lihat ranking
-Club Rank → Ranking club
-My Stats → Statistik kamu
+🏎️ **User**
+!ta → Panel utama
 
-🛠️ **Admin Commands**
-!create_event <nama> → Buat event
-!delete_event <nama> → Hapus event
-!del_player <IGN / ID> → Hapus peserta
-!export → Export CSV
+🛠️ **Admin**
+!create_event <nama>
+!delete_event <nama>
+!del_player <IGN/ID>
 
-🌐 **Web Dashboard**
-/ → List event
-/event/<nama> → Leaderboard
+🌐 **Web**
+/event/<nama>
 
-🎯 **Auto System**
-• Auto Role Champion
+🔥 Auto:
 • Anti Cheat
-• Cooldown Submit
-• History Tracking
+• Auto Role
+• Cooldown
+• History
         """,
         color=0x3498db
     )
 
 # ================= AUTO ROLE =================
-async def update_role(guild, event_name):
-    data = list(col.find({"event": event_name}).sort("waktu_raw",1))
+async def update_role(guild, event):
+    data = list(col.find({"event": event}).sort("waktu_raw",1))
     if not data: return
 
-    top_id = data[0]["user_id"]
-    role_name = f"Champion {event_name}"
+    top = data[0]["user_id"]
+    role_name = f"Champion {event}"
 
     role = discord.utils.get(guild.roles, name=role_name)
     if not role:
@@ -95,7 +94,7 @@ async def update_role(guild, event_name):
         if role in m.roles:
             await m.remove_roles(role)
 
-    member = guild.get_member(top_id)
+    member = guild.get_member(top)
     if member:
         await member.add_roles(role)
 
@@ -109,7 +108,7 @@ class SubmitModal(ui.Modal, title="Submit Time"):
     async def on_submit(self, i: discord.Interaction):
         sec = parse_time(self.time.value)
         if not sec or sec < 10:
-            return await i.response.send_message("❌ Format salah / terlalu cepat", ephemeral=True)
+            return await i.response.send_message("❌ Format salah", ephemeral=True)
 
         await i.response.send_message("📸 Upload screenshot", ephemeral=True)
 
@@ -141,7 +140,7 @@ class SubmitModal(ui.Modal, title="Submit Time"):
                 "date": datetime.datetime.now()
             })
 
-            embed = discord.Embed(title="🌟 REKOR BARU", color=0x2ecc71)
+            embed = discord.Embed(title="🌟 REKOR BARU")
             embed.add_field(name="IGN", value=self.ign.value)
             embed.add_field(name="TIME", value=self.time.value)
 
@@ -153,18 +152,6 @@ class SubmitModal(ui.Modal, title="Submit Time"):
 
         except:
             await i.followup.send("❌ Timeout", ephemeral=True)
-
-# ================= EMBEDS =================
-def leaderboard(event):
-    data = list(col.find({"event": event}).sort("waktu_raw",1))
-    medals = ["🥇","🥈","🥉"]
-    desc = ""
-
-    for i,d in enumerate(data[:10]):
-        icon = medals[i] if i<3 else f"{i+1}."
-        desc += f"{icon} {clean(d['ign'])} - `{d['waktu']}`\n"
-
-    return discord.Embed(title=f"🏆 {event}", description=desc or "Kosong")
 
 # ================= UI =================
 class EventSelect(ui.Select):
@@ -181,7 +168,7 @@ class EventView(ui.View):
         self.add_item(EventSelect())
 
 class MainView(ui.View):
-    def __init__(self): 
+    def __init__(self):
         super().__init__(timeout=None)
 
     @ui.button(label="Submit", style=discord.ButtonStyle.green)
@@ -196,10 +183,22 @@ class MainView(ui.View):
     async def help_btn(self, i, b):
         await i.response.send_message(embed=help_embed(), ephemeral=True)
 
+# ================= EMBED =================
+def leaderboard(event):
+    data = list(col.find({"event": event}).sort("waktu_raw",1))
+    medals = ["🥇","🥈","🥉"]
+    desc = ""
+
+    for i,d in enumerate(data[:10]):
+        icon = medals[i] if i<3 else f"{i+1}."
+        desc += f"{icon} {clean(d['ign'])} - `{d['waktu']}`\n"
+
+    return discord.Embed(title=f"🏆 {event}", description=desc or "Kosong")
+
 # ================= COMMAND =================
 @bot.command()
 async def ta(ctx):
-    await ctx.send("🏎️ TIME ATTACK PANEL", view=MainView())
+    await ctx.send("🏎️ PANEL", view=MainView())
 
 @bot.command()
 async def help(ctx):
@@ -220,7 +219,7 @@ async def delete_event(ctx, name):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def del_player(ctx, *, target: str):
-    query = {"event": ctx.channel.name}
+    query = {}
 
     if target.isdigit():
         query["user_id"] = int(target)
@@ -241,6 +240,7 @@ async def on_ready():
     print("BOT READY")
 
     t = threading.Thread(target=run_web)
+    t.daemon = True  # ✅ FIX RAILWAY
     t.start()
 
 bot.run(TOKEN)
