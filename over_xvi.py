@@ -21,29 +21,40 @@ cluster = MongoClient(MONGO_URL)
 db = cluster["over_xvi_db"]
 collection = db["timeattack"]
 
-# --- FUNGSI EKSPOR DATA KE CSV ---
+# --- FUNGSI EKSPOR CSV RAPI ---
 async def export_to_csv():
     results = list(collection.find().sort("waktu", 1))
     if not results:
         return None
 
     output = io.StringIO()
-    writer = csv.writer(output)
-    # Header kolom sesuai kebutuhan rekap
-    writer.writerow(['Rank', 'IGN', 'ID Game', 'Club', 'Waktu', 'Tanggal Submit'])
+    # Menggunakan excel dialect untuk kompatibilitas tinggi
+    writer = csv.writer(output, dialect='excel')
+    
+    # Header kolom yang bersih
+    writer.writerow(['RANK', 'NAMA PEMAIN (IGN)', 'ID GAME', 'NAMA CLUB', 'REKOR WAKTU', 'WAKTU SUBMIT'])
     
     for i, row in enumerate(results, 1):
+        # Format tanggal Indonesia (Contoh: 25 Mar 2026, 13:00)
+        submit_time = row.get('last_submit')
+        if isinstance(submit_time, datetime.datetime):
+            formatted_date = submit_time.strftime("%d %b %Y, %H:%M")
+        else:
+            formatted_date = "N/A"
+
         writer.writerow([
-            i, 
+            f"#{i}", 
             row.get('ign', 'N/A'), 
-            row.get('game_id', 'N/A'), 
+            f"'{row.get('game_id', 'N/A')}", # Tanda kutip agar ID Game tidak berubah jadi angka ilmiah
             row.get('club', 'N/A'), 
             row.get('waktu', 'N/A'),
-            row.get('last_submit', 'N/A')
+            formatted_date
         ])
     
     output.seek(0)
-    return discord.File(io.BytesIO(output.getvalue().encode()), filename=f"rekap_ta_{datetime.date.today()}.csv")
+    # PENTING: utf-8-sig agar simbol IGN tidak berantakan di Excel/Sheets
+    file_data = output.getvalue().encode('utf-8-sig')
+    return discord.File(io.BytesIO(file_data), filename=f"REKAP_TA_{datetime.date.today()}.csv")
 
 # --- LEADERBOARD ---
 def create_leaderboard_embed(page=1):
@@ -83,8 +94,7 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
 
     async def on_submit(self, interaction: discord.Interaction):
         user = interaction.user
-        # Pesan konfirmasi ephemeral agar channel tetap rapi
-        await interaction.response.send_message(f"✅ Data terdaftar! Kirim screenshot rekor Anda sekarang.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Data diterima! Kirim screenshot rekor Anda sekarang.", ephemeral=True)
 
         def check(m):
             return m.author == user and m.channel == interaction.channel and len(m.attachments) > 0
@@ -93,7 +103,7 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
             msg = await bot.wait_for('message', timeout=60.0, check=check)
             attachment = msg.attachments[0]
             
-            # Re-upload gambar agar tidak hilang saat pesan asli dihapus
+            # Re-upload gambar agar tidak rusak saat pesan dihapus
             image_bytes = await attachment.read()
             file_name = attachment.filename
             
@@ -111,31 +121,27 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
                 upsert=True
             )
 
-            # Beri jeda 1 detik lalu hapus pesan asli peserta
             await asyncio.sleep(1)
-            try:
-                await msg.delete()
-            except:
-                pass
+            try: await msg.delete()
+            except: pass
 
-            # Embed Publik hasil submit
             embed = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
             embed.add_field(name="👤 Peserta", value=f"**{self.ign_input.value}**", inline=True)
             embed.add_field(name="🛡️ Club", value=self.club_input.value, inline=True)
             embed.add_field(name="🆔 ID Game", value=self.id_input.value, inline=False)
             embed.add_field(name="⏱️ Waktu", value=f"`{self.waktu_input.value}`", inline=False)
             
-            # Lampirkan kembali file gambar
             file = discord.File(io.BytesIO(image_bytes), filename=file_name)
             embed.set_image(url=f"attachment://{file_name}")
             embed.set_footer(text=f"Submitter: {user.display_name}")
             
             await interaction.channel.send(file=file, embed=embed)
 
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⚠️ Waktu habis. Silakan submit ulang.", ephemeral=True)
+        except Exception as e:
+            print(f"Error: {e}")
+            await interaction.followup.send("⚠️ Terjadi kesalahan.", ephemeral=True)
 
-# --- VIEW LEADERBOARD & EKSPOR ---
+# --- NAVIGASI ---
 class LeaderboardPagination(ui.View):
     def __init__(self, current_page=1):
         super().__init__(timeout=60)
@@ -155,17 +161,15 @@ class LeaderboardPagination(ui.View):
             self.current_page += 1
             await interaction.response.edit_message(embed=embed, view=self)
 
-    # Tombol Ekspor Khusus Admin
     @ui.button(label='📊 Export CSV (Admin)', style=discord.ButtonStyle.green)
     async def export_button(self, interaction: discord.Interaction, button: ui.Button):
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Hanya Admin yang bisa mengakses fitur ini.", ephemeral=True)
-        
+            return await interaction.response.send_message("❌ Khusus Admin.", ephemeral=True)
         file = await export_to_csv()
         if file:
-            await interaction.response.send_message("📂 File rekap siap. Silakan upload ke Google Sheets.", file=file, ephemeral=True)
+            await interaction.response.send_message("📂 Data rekap siap digunakan:", file=file, ephemeral=True)
         else:
-            await interaction.response.send_message("❌ Belum ada data untuk diekspor.", ephemeral=True)
+            await interaction.response.send_message("❌ Belum ada data.", ephemeral=True)
 
     @ui.button(label='🏠 Menu', style=discord.ButtonStyle.red)
     async def back_to_menu(self, interaction: discord.Interaction, button: ui.Button):
@@ -175,13 +179,11 @@ class LeaderboardPagination(ui.View):
 class PersistentView(ui.View):
     def __init__(self):
         super().__init__(timeout=None) 
-
     @ui.button(label='Submit Your Time', style=discord.ButtonStyle.green, custom_id='submit_btn')
-    async def submit_button(self, interaction: discord.Interaction, button: ui.Button):
+    async def submit_button(self, interaction, button):
         await interaction.response.send_modal(SubmitModal())
-
     @ui.button(label='View Leaderboard', style=discord.ButtonStyle.grey, custom_id='leaderboard_btn')
-    async def leaderboard_button(self, interaction: discord.Interaction, button: ui.Button):
+    async def leaderboard_button(self, interaction, button):
         embed, _ = create_leaderboard_embed(page=1)
         await interaction.response.send_message(embed=embed, view=LeaderboardPagination(1), ephemeral=True)
 
@@ -193,16 +195,6 @@ async def on_ready():
 @bot.command()
 async def setup_ta(ctx):
     embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
-    embed.description = "Daftarkan waktu terbaikmu dengan menekan tombol di bawah."
     await ctx.send(embed=embed, view=PersistentView())
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def del_ta(ctx, *, ign_name: str):
-    result = collection.delete_one({"ign": {"$regex": f"^{ign_name}$", "$options": "i"}})
-    if result.deleted_count > 0:
-        await ctx.send(f"🗑️ Data IGN **{ign_name}** dihapus.")
-    else:
-        await ctx.send(f"❓ IGN tidak ditemukan.")
 
 bot.run(TOKEN)
