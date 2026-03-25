@@ -181,12 +181,30 @@ class AdminMenuView(ui.View):
     @ui.button(label="📥 Download CSV", style=discord.ButtonStyle.green)
     async def dl(self, i, b):
         data = list(col.find({"event": self.event_name}).sort("waktu_raw", 1))
-        out = io.StringIO(); w = csv.writer(out); w.writerow(["RANK", "IGN", "GAME ID", "TIME"])
-        for idx, d in enumerate(data): w.writerow([idx+1, d['ign'], d.get('game_id','-'), d['waktu']])
-        await i.response.send_message(file=discord.File(io.BytesIO(out.getvalue().encode()), f"{self.event_name}.csv"), ephemeral=True)
+        out = io.StringIO()
+        w = csv.writer(out)
+        w.writerow(["RANK", "IGN", "GAME ID", "TIME"])
+        for idx, d in enumerate(data):
+            w.writerow([idx+1, d['ign'], d.get('game_id','-'), d['waktu']])
+        
+        file = discord.File(io.BytesIO(out.getvalue().encode()), f"{self.event_name}.csv")
+        await i.response.send_message(f"✅ Data #{self.event_name}:", file=file, ephemeral=True)
+
+    @ui.button(label="👤 Hapus Pemain", style=discord.ButtonStyle.secondary)
+    async def del_p(self, i, b):
+        # Memanggil Modal Hapus Pemain
+        await i.response.send_modal(DeletePlayerModal(self.event_name))
+
+    @ui.button(label="🗑️ Reset Leaderboard", style=discord.ButtonStyle.danger)
+    async def reset(self, i, b):
+        # Menghapus semua data rekor di channel tersebut
+        col.delete_many({"event": self.event_name})
+        await i.response.send_message(f"✅ Leaderboard #{self.event_name} telah dibersihkan!", ephemeral=True)
 
     @ui.button(label="🏠 Home", style=discord.ButtonStyle.blurple)
     async def home_btn(self, i, b):
+        # Kembali ke tampilan utama
+        from __main__ import MAIN_DESC, MainView # Pastikan variabel ini terjangkau
         emb = discord.Embed(title=f"🏎️ EVENT: {self.event_name.upper()}", description=MAIN_DESC, color=0x3498db)
         await i.response.edit_message(embed=emb, view=MainView(self.event_name))
 
