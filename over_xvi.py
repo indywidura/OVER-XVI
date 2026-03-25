@@ -6,8 +6,9 @@ import datetime, asyncio, re, io, csv, threading, os
 from flask import Flask, jsonify
 
 # ================= CONFIG =================
-TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GYDvg2.eKpkGIEGjhIpRC3IShXIutvkf6ppJvQDtkGKsw'
-MONGO_URL = "mongodb+srv://time-attack1:01010101@cluster0.smztndb.mongodb.net/?appName=Cluster0"
+# Ganti bagian lama dengan ini agar Railway bisa membaca tab Variables
+TOKEN = os.getenv('TOKEN') 
+MONGO_URL = os.getenv('MONGO_URL')
 
 bot = commands.Bot(
     command_prefix="!",
