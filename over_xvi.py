@@ -3,7 +3,7 @@ from discord.ext import commands
 import datetime
 
 # --- KONFIGURASI ---
-TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.G78R5E.Ny8t2ec_iNPGgZVbWzr0j7HaJnycoOHGFsTtVg' # Ganti dengan Token dari Developer Portal
+TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i8' # Ganti dengan Token dari Developer Portal
 BOT_NAME = "OVER-XVI"
 
 # Setting hak akses bot (Intents)
