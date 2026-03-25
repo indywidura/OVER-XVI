@@ -2,183 +2,245 @@ import discord
 from discord.ext import commands
 from discord import ui
 from pymongo import MongoClient
-import datetime
-import math
-import io
-import csv
-import asyncio
+import datetime, asyncio, re, io, csv, threading
+from flask import Flask, jsonify
 
-# --- KONFIGURASI ---
-TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i8'
-MONGO_URL = "mongodb+srv://time-attack1:01010101@cluster0.smztndb.mongodb.net/?appName=Cluster0"
+# ================= CONFIG =================
+TOKEN = "YOUR_TOKEN"
+MONGO_URL = "YOUR_MONGO_URL"
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
-cluster = MongoClient(MONGO_URL)
-db = cluster["over_xvi_db"]
-collection = db["timeattack"]
+db = MongoClient(MONGO_URL)["over_xvi_db"]
+col = db["timeattack"]
+history = db["history"]
+events = db["events"]
 
-# --- HELPER FUNCTIONS ---
-def time_to_seconds(time_str):
-    """Sortir akurat: Mengonversi format waktu ke angka detik."""
-    try:
-        parts = time_str.replace(':', '.').split('.')
-        if len(parts) == 3: 
-            return int(parts[0]) * 60 + int(parts[1]) + float(f"0.{parts[2]}")
-        elif len(parts) == 2: 
-            return int(parts[0]) + float(f"0.{parts[1]}")
-        return float(time_str)
-    except:
-        return 999999.0
+# ================= WEB =================
+app = Flask(__name__)
 
-def clean_text(text):
-    """Membersihkan karakter khusus agar tidak error di HP."""
-    if not text: return "N/A"
-    return "".join(i for i in text if ord(i) < 128)
+@app.route("/")
+def home():
+    return jsonify(list(events.find({}, {"_id":0})))
 
-async def export_to_csv(channel_id):
-    """Ekspor data channel spesifik ke CSV."""
-    results = list(collection.find({"channel_id": channel_id}).sort("waktu_raw", 1))
-    if not results: return None
-    output = io.StringIO()
-    writer = csv.writer(output, delimiter=',', quotechar='"')
-    writer.writerow(['RANK', 'IGN', 'ID GAME', 'CLUB', 'TIME', 'SUBMITTED'])
-    for i, row in enumerate(results, 1):
-        st = row.get('last_submit')
-        fmt_date = st.strftime("%d/%m/%y %H:%M") if isinstance(st, datetime.datetime) else "N/A"
-        writer.writerow([f"#{i}", clean_text(row.get('ign')), row.get('game_id'), clean_text(row.get('club')), row.get('waktu'), fmt_date])
-    output.seek(0)
-    return discord.File(io.BytesIO(output.getvalue().encode('utf-8')), filename=f"REKAP_{channel_id}.csv")
+@app.route("/event/<name>")
+def event_lb(name):
+    data = list(col.find({"event": name}).sort("waktu_raw",1))
+    return jsonify([
+        {
+            "rank": i+1,
+            "ign": d.get("ign"),
+            "time": d.get("waktu"),
+            "club": d.get("club","-")
+        } for i,d in enumerate(data)
+    ])
 
-# --- UI COMPONENTS ---
-class SubmitModal(ui.Modal, title='Submit Time Attack'):
-    ign = ui.TextInput(label='Nama In-Game (IGN)', placeholder='RFF•SuperFae')
-    idx = ui.TextInput(label='ID In-Game', placeholder='12345678')
-    clb = ui.TextInput(label='Nama Club', placeholder='APEX')
-    wkt = ui.TextInput(label='Waktu (MM:SS.ms)', placeholder='01:35.34')
+def run_web():
+    app.run(host="0.0.0.0", port=5000)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        uid, cid = interaction.user.id, interaction.channel_id
-        
-        # Anti-Spam: Cek cooldown 10 menit.
-        user_data = collection.find_one({"_id": f"{uid}_{cid}"})
-        if user_data and "last_submit" in user_data:
-            diff = datetime.datetime.now() - user_data["last_submit"]
-            if diff.total_seconds() < 600:
-                return await interaction.response.send_message(f"⏳ Tunggu {int((600-diff.total_seconds())/60)} menit lagi.", ephemeral=True)
+# ================= HELPER =================
+def parse_time(t):
+    if not re.match(r'^\d{1,2}:\d{2}\.\d{2}$', t):
+        return None
+    m,s = t.split(":")
+    s,ms = s.split(".")
+    return int(m)*60 + int(s) + float(f"0.{ms}")
 
-        await interaction.response.send_message(f"✅ Terdaftar! Kirim screenshot rekor sekarang.", ephemeral=True)
-        def check(m): return m.author.id == uid and m.channel.id == cid and m.attachments
-        
+def clean(x): return x if x else "N/A"
+
+# ================= HELP EMBED =================
+def help_embed():
+    return discord.Embed(
+        title="📖 COMMAND LIST",
+        description="""
+🏎️ **User Commands**
+!ta → Buka panel utama
+Submit Button → Kirim waktu
+Leaderboard → Lihat ranking
+Club Rank → Ranking club
+My Stats → Statistik kamu
+
+🛠️ **Admin Commands**
+!create_event <nama> → Buat event
+!delete_event <nama> → Hapus event
+!del_player <IGN / ID> → Hapus peserta
+!export → Export CSV
+
+🌐 **Web Dashboard**
+/ → List event
+/event/<nama> → Leaderboard
+
+🎯 **Auto System**
+• Auto Role Champion
+• Anti Cheat
+• Cooldown Submit
+• History Tracking
+        """,
+        color=0x3498db
+    )
+
+# ================= AUTO ROLE =================
+async def update_role(guild, event_name):
+    data = list(col.find({"event": event_name}).sort("waktu_raw",1))
+    if not data: return
+
+    top_id = data[0]["user_id"]
+    role_name = f"Champion {event_name}"
+
+    role = discord.utils.get(guild.roles, name=role_name)
+    if not role:
+        role = await guild.create_role(name=role_name)
+
+    for m in guild.members:
+        if role in m.roles:
+            await m.remove_roles(role)
+
+    member = guild.get_member(top_id)
+    if member:
+        await member.add_roles(role)
+
+# ================= SUBMIT =================
+class SubmitModal(ui.Modal, title="Submit Time"):
+    event = ui.TextInput(label="Event")
+    ign = ui.TextInput(label="IGN")
+    club = ui.TextInput(label="Club")
+    time = ui.TextInput(label="Time MM:SS.ms")
+
+    async def on_submit(self, i: discord.Interaction):
+        sec = parse_time(self.time.value)
+        if not sec or sec < 10:
+            return await i.response.send_message("❌ Format salah / terlalu cepat", ephemeral=True)
+
+        await i.response.send_message("📸 Upload screenshot", ephemeral=True)
+
+        def check(m): return m.author.id == i.user.id and m.attachments
+
         try:
-            msg = await bot.wait_for('message', timeout=60.0, check=check)
+            msg = await bot.wait_for("message", timeout=60, check=check)
             img = await msg.attachments[0].read()
-            collection.update_one(
-                {"_id": f"{uid}_{cid}"}, 
-                {"$set": {
-                    "user_id": uid, "channel_id": cid, "ign": self.ign.value, 
-                    "game_id": self.idx.value, "club": self.clb.value, 
-                    "waktu": self.wkt.value, "waktu_raw": time_to_seconds(self.wkt.value),
+
+            col.update_one(
+                {"user_id": i.user.id, "event": self.event.value},
+                {"$set":{
+                    "user_id": i.user.id,
+                    "event": self.event.value,
+                    "ign": self.ign.value,
+                    "club": self.club.value,
+                    "waktu": self.time.value,
+                    "waktu_raw": sec,
                     "last_submit": datetime.datetime.now()
-                }}, upsert=True
+                }},
+                upsert=True
             )
-            try: await msg.delete() 
-            except: pass
 
-            embed = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
-            embed.add_field(name="👤 Peserta", value=f"**{self.ign.value}**", inline=False)
-            embed.add_field(name="🛡️ Club", value=f"{self.clb.value}", inline=False)
-            embed.add_field(name="🆔 ID Game", value=f"{self.idx.value}", inline=False)
-            embed.add_field(name="⏱️ Waktu", value=f"`{self.wkt.value}`", inline=False)
-            embed.set_footer(text=f"Submitter: {interaction.user.display_name}")
-            file = discord.File(io.BytesIO(img), filename="rekor.png")
-            embed.set_image(url="attachment://rekor.png")
-            await interaction.channel.send(file=file, embed=embed)
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⚠️ Waktu habis!", ephemeral=True)
+            history.insert_one({
+                "user_id": i.user.id,
+                "event": self.event.value,
+                "time": self.time.value,
+                "raw": sec,
+                "date": datetime.datetime.now()
+            })
 
-class LeaderboardPagination(ui.View):
-    def __init__(self, cid, page=1):
-        super().__init__(timeout=60)
-        self.cid, self.page = cid, page
-    @ui.button(label='⬅️ Prev', style=discord.ButtonStyle.blurple)
-    async def prev(self, interaction, button):
-        if self.page > 1: self.page -= 1; await self.update(interaction)
-        else: await interaction.response.defer()
-    @ui.button(label='Next ➡️', style=discord.ButtonStyle.blurple)
-    async def next(self, interaction, button):
-        _, tp = create_lb_embed(self.cid, self.page)
-        if self.page < tp: self.page += 1; await self.update(interaction)
-        else: await interaction.response.defer()
-    @ui.button(label='📊 Export', style=discord.ButtonStyle.green)
-    async def export(self, interaction, button):
-        if not interaction.user.guild_permissions.administrator: return await interaction.response.send_message("❌ Admin Only!", ephemeral=True)
-        f = await export_to_csv(self.cid)
-        if f: await interaction.response.send_message("📂 Data Channel:", file=f, ephemeral=True)
-    @ui.button(label='🏠 Menu', style=discord.ButtonStyle.red)
-    async def back_to_menu(self, interaction, button):
-        await interaction.response.edit_message(embed=discord.Embed(title="🏎️ TIME ATTACK", color=0x2ecc71), view=PersistentView())
-    async def update(self, interaction):
-        emb, _ = create_lb_embed(self.cid, self.page)
-        await interaction.response.edit_message(embed=emb, view=self)
+            embed = discord.Embed(title="🌟 REKOR BARU", color=0x2ecc71)
+            embed.add_field(name="IGN", value=self.ign.value)
+            embed.add_field(name="TIME", value=self.time.value)
 
-def create_lb_embed(cid, page=1):
-    res = list(collection.find({"channel_id": cid}).sort("waktu_raw", 1)) 
-    tp = math.ceil(len(res) / 10) or 1
-    if not res: return discord.Embed(title="⏱️ LEADERBOARD", description="Kosong.", color=0xff0000), 1
-    data = res[(page-1)*10 : page*10]
-    table = "RK | IGN             | TIME\n---|-----------------|----------\n"
-    for i, r in enumerate(data, (page-1)*10 + 1):
-        table += f"{i:<2} | {clean_text(r.get('ign'))[:15]:<15} | {r.get('waktu')}\n"
-    emb = discord.Embed(title="⏱️ LEADERBOARD", description=f"```\n{table}```", color=0x3498db)
-    emb.set_footer(text=f"Halaman {page}/{tp}")
-    return emb, tp
+            file = discord.File(io.BytesIO(img), filename="img.png")
+            embed.set_image(url="attachment://img.png")
 
-class PersistentView(ui.View):
-    def __init__(self): super().__init__(timeout=None) 
-    @ui.button(label='Submit', style=discord.ButtonStyle.green, custom_id='sub_v')
-    async def sub(self, interaction, button): await interaction.response.send_modal(SubmitModal())
-    @ui.button(label='Leaderboard', style=discord.ButtonStyle.grey, custom_id='lb_v')
-    async def lb(self, interaction, button):
-        emb, _ = create_lb_embed(interaction.channel_id, 1)
-        await interaction.response.send_message(embed=emb, view=LeaderboardPagination(interaction.channel_id, 1), ephemeral=True)
+            await i.channel.send(file=file, embed=embed)
+            await update_role(i.guild, self.event.value)
 
-# --- SIMPLE COMMANDS ---
+        except:
+            await i.followup.send("❌ Timeout", ephemeral=True)
+
+# ================= EMBEDS =================
+def leaderboard(event):
+    data = list(col.find({"event": event}).sort("waktu_raw",1))
+    medals = ["🥇","🥈","🥉"]
+    desc = ""
+
+    for i,d in enumerate(data[:10]):
+        icon = medals[i] if i<3 else f"{i+1}."
+        desc += f"{icon} {clean(d['ign'])} - `{d['waktu']}`\n"
+
+    return discord.Embed(title=f"🏆 {event}", description=desc or "Kosong")
+
+# ================= UI =================
+class EventSelect(ui.Select):
+    def __init__(self):
+        opts = [discord.SelectOption(label=e["name"]) for e in events.find()]
+        super().__init__(placeholder="Pilih Event", options=opts)
+
+    async def callback(self, i):
+        await i.response.send_message(embed=leaderboard(self.values[0]), ephemeral=True)
+
+class EventView(ui.View):
+    def __init__(self):
+        super().__init__()
+        self.add_item(EventSelect())
+
+class MainView(ui.View):
+    def __init__(self): 
+        super().__init__(timeout=None)
+
+    @ui.button(label="Submit", style=discord.ButtonStyle.green)
+    async def sub(self, i, b):
+        await i.response.send_modal(SubmitModal())
+
+    @ui.button(label="Leaderboard", style=discord.ButtonStyle.blurple)
+    async def lb(self, i, b):
+        await i.response.send_message("Pilih event:", view=EventView(), ephemeral=True)
+
+    @ui.button(label="📖 Help", style=discord.ButtonStyle.grey)
+    async def help_btn(self, i, b):
+        await i.response.send_message(embed=help_embed(), ephemeral=True)
+
+# ================= COMMAND =================
+@bot.command()
+async def ta(ctx):
+    await ctx.send("🏎️ TIME ATTACK PANEL", view=MainView())
+
+@bot.command()
+async def help(ctx):
+    await ctx.send(embed=help_embed())
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def create_event(ctx, name):
+    events.insert_one({"name": name})
+    await ctx.send(f"✅ Event {name} dibuat")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def delete_event(ctx, name):
+    events.delete_one({"name": name})
+    await ctx.send(f"🗑️ Event {name} dihapus")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def del_player(ctx, *, target: str):
+    query = {"event": ctx.channel.name}
+
+    if target.isdigit():
+        query["user_id"] = int(target)
+    else:
+        query["ign"] = {"$regex": f"^{target}$", "$options": "i"}
+
+    result = col.delete_one(query)
+
+    if result.deleted_count:
+        await ctx.send(f"🗑️ {target} dihapus")
+    else:
+        await ctx.send("❌ Tidak ditemukan")
+
+# ================= RUN =================
 @bot.event
-async def on_ready(): bot.add_view(PersistentView()); print(f'{bot.user.name} online!')
+async def on_ready():
+    bot.add_view(MainView())
+    print("BOT READY")
 
-@bot.command(name="ta")
-async def setup_ta_simple(ctx):
-    """Menampilkan panel utama."""
-    await ctx.send(embed=discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71), view=PersistentView())
-
-@bot.command(name="reset")
-@commands.has_permissions(administrator=True)
-async def reset_channel_simple(ctx):
-    """Hapus data hanya di channel ini."""
-    collection.delete_many({"channel_id": ctx.channel.id})
-    await ctx.send(f"✅ Data channel **{ctx.channel.name}** dihapus.")
-
-@bot.command(name="clear")
-@commands.has_permissions(administrator=True)
-async def reset_global_simple(ctx):
-    """Hapus seluruh data global."""
-    def check(m): return m.author == ctx.author and m.content.lower() == 'konfirmasi'
-    await ctx.send("⚠️ Ketik `konfirmasi` untuk hapus SEMUA data global.")
-    try:
-        await bot.wait_for('message', timeout=15.0, check=check)
-        collection.delete_many({}) 
-        await ctx.send("✅ Database bersih.")
-    except asyncio.TimeoutError: await ctx.send("❌ Reset dibatalkan.")
-
-@bot.command(name="del")
-@commands.has_permissions(administrator=True)
-async def delete_one_simple(ctx, *, ign: str):
-    """Menghapus satu pemain berdasarkan IGN."""
-    collection.delete_one({"channel_id": ctx.channel.id, "ign": {"$regex": f"^{ign}$", "$options": "i"}})
-    await ctx.send(f"🗑️ Data **{ign}** dihapus.")
+    t = threading.Thread(target=run_web)
+    t.start()
 
 bot.run(TOKEN)
