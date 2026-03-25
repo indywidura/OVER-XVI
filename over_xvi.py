@@ -8,7 +8,7 @@ TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i
 
 # GANTI INI dengan Connection String MongoDB kamu!
 # Jangan lupa masukkan password yang benar di dalam linknya.
-MONGO_URL = "mongodb+srv://time-attack1:<db_password>@cluster0.smztndb.mongodb.net/?appName=Cluster0"
+MONGO_URL = "mongodb+srv://time-attack1:<db_01010101>@cluster0.smztndb.mongodb.net/?appName=Cluster0"
 
 BOT_NAME = "OVER-XVI"
 
