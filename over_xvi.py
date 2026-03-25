@@ -48,7 +48,7 @@ def create_leaderboard_embed(page=1):
     
     return embed, total_pages
 
-# --- KELAS MODAL (Input Waktu + Logika Screenshot) ---
+# --- KELAS MODAL (Input Waktu + Screenshot) ---
 class SubmitModal(ui.Modal, title='Submit Time Attack'):
     waktu_input = ui.TextInput(
         label='Masukkan Waktu (Contoh: 00:05.123)',
@@ -63,13 +63,11 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
         waktu = self.waktu_input.value
         tanggal = datetime.datetime.now().strftime("%d/%m/%Y")
 
-        # 1. Beri instruksi unggah foto
         await interaction.response.send_message(
             f"✅ Data waktu `{waktu}` diterima!\n**Mohon unggah (upload) screenshot bukti Anda di sini dalam 60 detik.**", 
             ephemeral=True
         )
 
-        # 2. Tunggu pesan dari user yang berisi gambar
         def check(m):
             return m.author == user and m.channel == interaction.channel and len(m.attachments) > 0
 
@@ -77,7 +75,6 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
             msg = await bot.wait_for('message', timeout=60.0, check=check)
             screenshot_url = msg.attachments[0].url
             
-            # 3. Cek database dan update jika lebih cepat
             user_data = collection.find_one({"_id": user.id})
 
             if user_data is None or waktu < user_data["waktu"]:
@@ -87,7 +84,92 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
                     upsert=True
                 )
                 
-                # Kirim konfirmasi publik dengan foto
                 embed_konfirmasi = discord.Embed(
                     title="📸 BUKTI REKOR BARU",
-                    description=f"Peserta: **{user.display_name}**\nWaktu: `{waktu}`\
+                    description=f"Peserta: **{user.display_name}**\nWaktu: `{waktu}`\nStatus: **Tercatat!**",
+                    color=0x2ecc71
+                )
+                embed_konfirmasi.set_image(url=screenshot_url)
+                await interaction.channel.send(embed=embed_konfirmasi)
+                
+            else:
+                await interaction.followup.send(
+                    f"❌ Waktu `{waktu}` tidak lebih baik dari rekor terbaikmu (`{user_data['waktu']}`).", 
+                    ephemeral=True
+                )
+
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⚠️ Waktu habis. Data gagal dicatat.", ephemeral=True)
+
+# --- VIEW NAVIGASI LEADERBOARD ---
+class LeaderboardPagination(ui.View):
+    def __init__(self, current_page=1):
+        super().__init__(timeout=60)
+        self.current_page = current_page
+
+    @ui.button(label='⬅️ Prev', style=discord.ButtonStyle.blurple)
+    async def prev_button(self, interaction: discord.Interaction, button: ui.Button):
+        if self.current_page > 1:
+            self.current_page -= 1
+            embed, _ = create_leaderboard_embed(self.current_page)
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    @ui.button(label='Next ➡️', style=discord.ButtonStyle.blurple)
+    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
+        embed, total_pages = create_leaderboard_embed(self.current_page + 1)
+        if self.current_page < total_pages:
+            self.current_page += 1
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    @ui.button(label='🏠 Kembali ke Menu', style=discord.ButtonStyle.red)
+    async def back_to_menu(self, interaction: discord.Interaction, button: ui.Button):
+        embed = discord.Embed(
+            title="🏎️ TIME ATTACK COMPETITION",
+            description="Klik tombol di bawah untuk berpartisipasi!",
+            color=0x2ecc71
+        )
+        await interaction.response.edit_message(embed=embed, view=PersistentView())
+
+# --- VIEW UTAMA ---
+class PersistentView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) 
+
+    @ui.button(label='Submit Your Time', style=discord.ButtonStyle.green, custom_id='submit_btn')
+    async def submit_button(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_modal(SubmitModal())
+
+    @ui.button(label='View Leaderboard', style=discord.ButtonStyle.grey, custom_id='leaderboard_btn')
+    async def leaderboard_button(self, interaction: discord.Interaction, button: ui.Button):
+        embed, _ = create_leaderboard_embed(page=1)
+        await interaction.response.send_message(embed=embed, view=LeaderboardPagination(1), ephemeral=True)
+
+@bot.event
+async def on_ready():
+    bot.add_view(PersistentView()) 
+    print(f'Bot {bot.user.name} online!')
+
+@bot.command()
+async def setup_ta(ctx):
+    embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
+    await ctx.send(embed=embed, view=PersistentView())
+
+# --- PERINTAH ADMIN: HAPUS DATA ---
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def del_ta(ctx, *, name: str):
+    """Menghapus data peserta berdasarkan nama di database"""
+    # Mencari data dengan nama (case insensitive)
+    result = collection.delete_one({"user_name": {"$regex": f"^{name}$", "$options": "i"}})
+    
+    if result.deleted_count > 0:
+        await ctx.send(f"🗑️ Data peserta dengan nama **{name}** telah dihapus dari leaderboard.")
+    else:
+        await ctx.send(f"❓ Peserta dengan nama **{name}** tidak ditemukan.")
+
+@del_ta.error
+async def del_ta_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("🚫 Kamu tidak punya izin (Admin) untuk menghapus data!")
+
+bot.run(TOKEN)
