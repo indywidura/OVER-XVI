@@ -6,8 +6,8 @@ import datetime, asyncio, re, io, csv, threading
 from flask import Flask, jsonify
 
 # ================= CONFIG =================
-TOKEN = "YOUR_TOKEN"
-MONGO_URL = "YOUR_MONGO_URL"
+TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i8'
+MONGO_URL = "mongodb+srv://time-attack1:01010101@cluster0.smztndb.mongodb.net/?appName=Cluster0"
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
