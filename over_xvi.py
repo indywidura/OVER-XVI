@@ -15,12 +15,11 @@ intents.message_content = True
 intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
-# --- SETUP MONGODB ---
 cluster = MongoClient(MONGO_URL)
 db = cluster["over_xvi_db"]
 collection = db["timeattack"]
 
-# --- FUNGSI PEMBUAT EMBED LEADERBOARD ---
+# --- FUNGSI EMBED LEADERBOARD (Tabel dengan ID Game) ---
 def create_leaderboard_embed(page=1):
     items_per_page = 10
     results = list(collection.find().sort("waktu", 1)) 
@@ -28,20 +27,18 @@ def create_leaderboard_embed(page=1):
     total_pages = math.ceil(total_results / items_per_page) or 1
     
     if not results:
-        return discord.Embed(title="⏱️ LEADERBOARD", description="Belum ada data peserta.", color=0xff0000), 1
+        return discord.Embed(title="⏱️ LEADERBOARD", description="Belum ada data.", color=0xff0000), 1
 
     start = (page - 1) * items_per_page
     end = start + items_per_page
     current_page_data = results[start:end]
 
-    # Tabel dengan Kolom ID In-Game
     header = "RK | IGN             | ID GAME    | TIME\n"
     sep    = "---|-----------------|------------|----------\n"
     table_content = ""
     
     for i, row in enumerate(current_page_data, start + 1):
         ign = row.get('ign', 'Unknown')[:15]
-        # Mengambil ID dari database untuk ditampilkan di tabel
         g_id = str(row.get('game_id', '-'))[:10]
         waktu = row.get('waktu', '--:--.--')
         table_content += f"{i:<2} | {ign:<15} | {g_id:<10} | {waktu}\n"
@@ -49,10 +46,9 @@ def create_leaderboard_embed(page=1):
     embed = discord.Embed(title="⏱️ TIME ATTACK LEADERBOARD", color=0x3498db)
     embed.description = f"```\n{header}{sep}{table_content}```"
     embed.set_footer(text=f"Halaman {page}/{total_pages} | Total: {total_results} Peserta")
-    
     return embed, total_pages
 
-# --- KELAS MODAL ---
+# --- MODAL INPUT ---
 class SubmitModal(ui.Modal, title='Submit Time Attack'):
     ign_input = ui.TextInput(label='Nama In-Game (IGN)', placeholder='Contoh: RFF•SuperFae', min_length=2, max_length=30)
     id_input = ui.TextInput(label='ID In-Game', placeholder='Masukkan ID Akun Anda')
@@ -63,16 +59,8 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
         user = interaction.user
         now = datetime.datetime.now()
         
-        user_data = collection.find_one({"_id": user.id})
-        # Anti-Spam 10 Menit
-        if user_data and "last_submit" in user_data:
-            diff = now - user_data["last_submit"]
-            if diff.total_seconds() < 600:
-                sisa = int((600 - diff.total_seconds()) / 60)
-                await interaction.response.send_message(f"⏳ **Cooldown!** Tunggu **{sisa} menit**.", ephemeral=True)
-                return
-
-        await interaction.response.send_message(f"✅ Data diterima! Unggah screenshot bukti (60 detik).", ephemeral=True)
+        # ANTI-SPAM DINONAKTIFKAN UNTUK TESTING
+        await interaction.response.send_message(f"✅ Data diterima! Unggah screenshot bukti sekarang (Waktu: 60 detik).", ephemeral=True)
 
         def check(m):
             return m.author == user and m.channel == interaction.channel and len(m.attachments) > 0
@@ -81,12 +69,16 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
             msg = await bot.wait_for('message', timeout=60.0, check=check)
             screenshot_url = msg.attachments[0].url
             
-            # FITUR: Hapus pesan asli dari pengirim (peserta) agar channel rapi
+            # Beri jeda 1 detik agar Discord memproses URL sebelum pesan dihapus
+            await asyncio.sleep(1)
             try:
                 await msg.delete()
             except:
                 pass 
 
+            user_data = collection.find_one({"_id": user.id})
+            
+            # Simpan data jika rekor lebih baik atau data baru
             if user_data is None or self.waktu_input.value < user_data["waktu"]:
                 collection.update_one(
                     {"_id": user.id},
@@ -102,22 +94,23 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
                     upsert=True
                 )
                 
-                # Bot tetap menampilkan gambar rekor di Embed
                 embed = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
                 embed.add_field(name="👤 Peserta", value=f"**{self.ign_input.value}**", inline=True)
-                embed.add_field(name="🆔 ID Game", value=self.id_input.value, inline=True)
+                embed.add_field(name="🛡️ Club", value=self.club_input.value, inline=True)
+                embed.add_field(name="🆔 ID Game", value=self.id_input.value, inline=False)
                 embed.add_field(name="⏱️ Waktu", value=f"`{self.waktu_input.value}`", inline=False)
                 embed.set_image(url=screenshot_url)
                 embed.set_footer(text="Pesan asli pengirim dihapus otomatis.")
                 await interaction.channel.send(embed=embed)
             else:
+                # Update waktu submit terakhir saja jika waktu tidak lebih baik
                 collection.update_one({"_id": user.id}, {"$set": {"last_submit": now}})
-                await interaction.followup.send(f"❌ Waktu tidak lebih baik.", ephemeral=True)
+                await interaction.followup.send(f"❌ Waktu tidak lebih baik dari rekor sebelumnya.", ephemeral=True)
 
         except asyncio.TimeoutError:
-            await interaction.followup.send("⚠️ Waktu habis.", ephemeral=True)
+            await interaction.followup.send("⚠️ Waktu habis. Data gagal dicatat.", ephemeral=True)
 
-# --- VIEW NAVIGASI ---
+# --- SISTEM NAVIGASI ---
 class LeaderboardPagination(ui.View):
     def __init__(self, current_page=1):
         super().__init__(timeout=60)
@@ -163,7 +156,7 @@ async def on_ready():
 @bot.command()
 async def setup_ta(ctx):
     embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
-    embed.description = "Gunakan tombol di bawah untuk partisipasi."
+    embed.description = "Daftarkan waktu terbaikmu dengan menekan tombol di bawah."
     await ctx.send(embed=embed, view=PersistentView())
 
 @bot.command()
@@ -171,7 +164,7 @@ async def setup_ta(ctx):
 async def del_ta(ctx, *, ign_name: str):
     result = collection.delete_one({"ign": {"$regex": f"^{ign_name}$", "$options": "i"}})
     if result.deleted_count > 0:
-        await ctx.send(f"🗑️ Data **{ign_name}** dihapus.")
+        await ctx.send(f"🗑️ Data IGN **{ign_name}** dihapus.")
     else:
         await ctx.send(f"❓ IGN tidak ditemukan.")
 
