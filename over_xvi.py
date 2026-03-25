@@ -4,6 +4,7 @@ from discord import ui
 from pymongo import MongoClient
 import datetime
 import math
+import asyncio
 
 # --- KONFIGURASI ---
 TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i8'
@@ -22,7 +23,7 @@ collection = db["timeattack"]
 # --- FUNGSI PEMBUAT EMBED LEADERBOARD (PAGINATION) ---
 def create_leaderboard_embed(page=1):
     items_per_page = 10
-    results = list(collection.find().sort("waktu", 1)) # Mengambil seluruh data
+    results = list(collection.find().sort("waktu", 1))
     total_results = len(results)
     total_pages = math.ceil(total_results / items_per_page) or 1
     
@@ -47,7 +48,7 @@ def create_leaderboard_embed(page=1):
     
     return embed, total_pages
 
-# --- KELAS MODAL (Input Waktu) ---
+# --- KELAS MODAL (Input Waktu + Logika Screenshot) ---
 class SubmitModal(ui.Modal, title='Submit Time Attack'):
     waktu_input = ui.TextInput(
         label='Masukkan Waktu (Contoh: 00:05.123)',
@@ -58,89 +59,35 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        user_id = interaction.user.id
-        user_name = interaction.user.display_name
+        user = interaction.user
         waktu = self.waktu_input.value
         tanggal = datetime.datetime.now().strftime("%d/%m/%Y")
 
-        user_data = collection.find_one({"_id": user_id})
-
-        if user_data is None or waktu < user_data["waktu"]:
-            collection.update_one(
-                {"_id": user_id},
-                {"$set": {"user_name": user_name, "waktu": waktu, "tanggal": tanggal}},
-                upsert=True
-            )
-            await interaction.response.send_message(f"✅ **{user_name}**, rekor baru dicatat: `{waktu}`!", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"❌ Waktu `{waktu}` lebih lambat dari rekor terbaikmu (`{user_data['waktu']}`).", ephemeral=True)
-
-# --- VIEW NAVIGASI LEADERBOARD (Next, Prev, Back) ---
-class LeaderboardPagination(ui.View):
-    def __init__(self, current_page=1):
-        super().__init__(timeout=60)
-        self.current_page = current_page
-
-    @ui.button(label='⬅️ Prev', style=discord.ButtonStyle.blurple)
-    async def prev_button(self, interaction: discord.Interaction, button: ui.Button):
-        if self.current_page > 1:
-            self.current_page -= 1
-            embed, _ = create_leaderboard_embed(self.current_page)
-            await interaction.response.edit_message(embed=embed, view=self)
-        else:
-            await interaction.response.send_message("Ini sudah halaman pertama!", ephemeral=True)
-
-    @ui.button(label='Next ➡️', style=discord.ButtonStyle.blurple)
-    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
-        embed, total_pages = create_leaderboard_embed(self.current_page + 1)
-        if self.current_page < total_pages:
-            self.current_page += 1
-            await interaction.response.edit_message(embed=embed, view=self)
-        else:
-            await interaction.response.send_message("Ini sudah halaman terakhir!", ephemeral=True)
-
-    @ui.button(label='🏠 Kembali ke Menu', style=discord.ButtonStyle.red)
-    async def back_to_menu(self, interaction: discord.Interaction, button: ui.Button):
-        # Menampilkan kembali menu utama
-        embed = discord.Embed(
-            title="🏎️ TIME ATTACK COMPETITION",
-            description="Klik tombol di bawah untuk berpartisipasi!\n\n"
-                        "🟢 **Submit Your Time**: Kirim rekor waktu terbaru.\n"
-                        "⚪ **View Leaderboard**: Lihat klasemen saat ini.",
-            color=0x2ecc71
+        # 1. Beri instruksi unggah foto
+        await interaction.response.send_message(
+            f"✅ Data waktu `{waktu}` diterima!\n**Mohon unggah (upload) screenshot bukti Anda di sini dalam 60 detik.**", 
+            ephemeral=True
         )
-        await interaction.response.edit_message(embed=embed, view=PersistentView())
 
-# --- VIEW UTAMA (Persistent) ---
-class PersistentView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None) # Tombol tetap aktif walau bot restart
+        # 2. Tunggu pesan dari user yang berisi gambar
+        def check(m):
+            return m.author == user and m.channel == interaction.channel and len(m.attachments) > 0
 
-    @ui.button(label='Submit Your Time', style=discord.ButtonStyle.green, custom_id='submit_btn')
-    async def submit_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(SubmitModal())
+        try:
+            msg = await bot.wait_for('message', timeout=60.0, check=check)
+            screenshot_url = msg.attachments[0].url
+            
+            # 3. Cek database dan update jika lebih cepat
+            user_data = collection.find_one({"_id": user.id})
 
-    @ui.button(label='View Leaderboard', style=discord.ButtonStyle.grey, custom_id='leaderboard_btn')
-    async def leaderboard_button(self, interaction: discord.Interaction, button: ui.Button):
-        # Menampilkan halaman 1 leaderboard dengan tombol navigasi
-        embed, _ = create_leaderboard_embed(page=1)
-        await interaction.response.send_message(embed=embed, view=LeaderboardPagination(1), ephemeral=True)
-
-@bot.event
-async def on_ready():
-    bot.add_view(PersistentView()) # Mendaftarkan view persistent
-    print(f'Bot {bot.user.name} online dan siap digunakan!')
-
-@bot.command()
-async def setup_ta(ctx):
-    """Panggil ini sekali di channel lomba"""
-    embed = discord.Embed(
-        title="🏎️ TIME ATTACK COMPETITION",
-        description="Klik tombol di bawah untuk berpartisipasi!\n\n"
-                    "🟢 **Submit Your Time**: Kirim rekor waktu terbaru.\n"
-                    "⚪ **View Leaderboard**: Lihat klasemen saat ini.",
-        color=0x2ecc71
-    )
-    await ctx.send(embed=embed, view=PersistentView())
-
-bot.run(TOKEN)
+            if user_data is None or waktu < user_data["waktu"]:
+                collection.update_one(
+                    {"_id": user.id},
+                    {"$set": {"user_name": user.display_name, "waktu": waktu, "tanggal": tanggal}},
+                    upsert=True
+                )
+                
+                # Kirim konfirmasi publik dengan foto
+                embed_konfirmasi = discord.Embed(
+                    title="📸 BUKTI REKOR BARU",
+                    description=f"Peserta: **{user.display_name}**\nWaktu: `{waktu}`\
