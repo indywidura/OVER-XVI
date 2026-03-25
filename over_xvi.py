@@ -22,6 +22,46 @@ leaderboard_data = [
     {"rank": "#5", "nama": "player 5", "waktu": "00:19.458"},
 ]
 
+# List kosong untuk menampung hasil Time Attack (sementara)
+time_attack_results = []
+
+@bot.command()
+async def submit(ctx, waktu: str):
+    """Perintah untuk member setor waktu Time Attack"""
+    # Contoh: !submit 01:25
+    
+    # Simpan data: Nama Member, Waktu, dan Tanggal
+    user_name = ctx.author.display_name
+    timestamp = datetime.datetime.now().strftime("%d/%m/%Y")
+    
+    # Masukkan ke list
+    time_attack_results.append({
+        "nama": user_name,
+        "waktu": waktu,
+        "tanggal": timestamp
+    })
+    
+    # Urutkan berdasarkan waktu terkecil (Opsional)
+    time_attack_results.sort(key=lambda x: x['waktu'])
+
+    await ctx.send(f"✅ **{user_name}**, waktu kamu (**{waktu}**) telah dicatat ke Leaderboard Time Attack!")
+
+@bot.command()
+async def timeattack(ctx):
+    """Menampilkan papan skor Time Attack terbaru"""
+    if not time_attack_results:
+        await ctx.send("Belum ada data Time Attack saat ini.")
+        return
+
+    embed = discord.Embed(title="⏱️ TIME ATTACK LEADERBOARD", color=0xffd700)
+    
+    description = ""
+    for i, data in enumerate(time_attack_results[:10], 1): # Ambil 10 besar
+        description += f"**#{i}** | {data['nama']} - `{data['waktu']}` ({data['tanggal']})\n"
+    
+    embed.description = description
+    await ctx.send(embed=embed)
+
 @bot.event
 async def on_ready():
     print(f'Bot {BOT_NAME} sudah online!')
