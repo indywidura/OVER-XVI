@@ -19,7 +19,7 @@ cluster = MongoClient(MONGO_URL)
 db = cluster["over_xvi_db"]
 collection = db["timeattack"]
 
-# --- FUNGSI EMBED LEADERBOARD (Tabel dengan ID Game) ---
+# --- LEADERBOARD ---
 def create_leaderboard_embed(page=1):
     items_per_page = 10
     results = list(collection.find().sort("waktu", 1)) 
@@ -45,10 +45,10 @@ def create_leaderboard_embed(page=1):
 
     embed = discord.Embed(title="⏱️ TIME ATTACK LEADERBOARD", color=0x3498db)
     embed.description = f"```\n{header}{sep}{table_content}```"
-    embed.set_footer(text=f"Halaman {page}/{total_pages} | Total: {total_results} Peserta")
+    embed.set_footer(text=f"Halaman {page}/{total_pages}")
     return embed, total_pages
 
-# --- MODAL INPUT ---
+# --- MODAL ---
 class SubmitModal(ui.Modal, title='Submit Time Attack'):
     ign_input = ui.TextInput(label='Nama In-Game (IGN)', placeholder='Contoh: RFF•SuperFae', min_length=2, max_length=30)
     id_input = ui.TextInput(label='ID In-Game', placeholder='Masukkan ID Akun Anda')
@@ -57,79 +57,80 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
 
     async def on_submit(self, interaction: discord.Interaction):
         user = interaction.user
-        now = datetime.datetime.now()
         
-        # ANTI-SPAM DINONAKTIFKAN UNTUK TESTING
-        await interaction.response.send_message(f"✅ Data diterima! Unggah screenshot bukti sekarang (Waktu: 60 detik).", ephemeral=True)
+        # Pesan instruksi ini hanya dilihat oleh pengirim (EPHEMERAL)
+        await interaction.response.send_message(
+            f"✅ **Data Terdaftar!** Sekarang kirimkan foto screenshot rekor Anda di channel ini.\n"
+            f"*Pesan Anda akan langsung dihapus otomatis oleh bot untuk menjaga kerapihan.*", 
+            ephemeral=True
+        )
 
         def check(m):
             return m.author == user and m.channel == interaction.channel and len(m.attachments) > 0
 
         try:
+            # Menunggu kiriman gambar
             msg = await bot.wait_for('message', timeout=60.0, check=check)
-            screenshot_url = msg.attachments[0].url
             
-            # Beri jeda 1 detik agar Discord memproses URL sebelum pesan dihapus
-            await asyncio.sleep(1)
+            # AMBIL FILE SEBAGAI PROXY (Trik agar gambar tidak hilang saat pesan dihapus)
+            attachment = msg.attachments[0]
+            image_url = attachment.url
+            
+            # Simpan data ke database
+            collection.update_one(
+                {"_id": user.id},
+                {
+                    "$set": {
+                        "ign": self.ign_input.value,
+                        "game_id": self.id_input.value,
+                        "club": self.club_input.value,
+                        "waktu": self.waktu_input.value,
+                        "last_submit": datetime.datetime.now()
+                    }
+                },
+                upsert=True
+            )
+
+            # KIRIM EMBED PUBLIK (Terlihat semua orang)
+            embed = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
+            embed.add_field(name="👤 Peserta", value=f"**{self.ign_input.value}**", inline=True)
+            embed.add_field(name="🛡️ Club", value=self.club_input.value, inline=True)
+            embed.add_field(name="🆔 ID Game", value=self.id_input.value, inline=False)
+            embed.add_field(name="⏱️ Waktu", value=f"`{self.waktu_input.value}`", inline=False)
+            
+            # Pasang gambar
+            embed.set_image(url=image_url)
+            embed.set_footer(text=f"Submitter: {user.display_name}")
+            
+            await interaction.channel.send(embed=embed)
+
+            # HAPUS PESAN ASLI USER (Agar tidak menumpuk)
+            await asyncio.sleep(0.5) # Jeda sebentar saja
             try:
                 await msg.delete()
             except:
-                pass 
-
-            user_data = collection.find_one({"_id": user.id})
-            
-            # Simpan data jika rekor lebih baik atau data baru
-            if user_data is None or self.waktu_input.value < user_data["waktu"]:
-                collection.update_one(
-                    {"_id": user.id},
-                    {
-                        "$set": {
-                            "ign": self.ign_input.value,
-                            "game_id": self.id_input.value,
-                            "club": self.club_input.value,
-                            "waktu": self.waktu_input.value,
-                            "last_submit": now
-                        }
-                    },
-                    upsert=True
-                )
-                
-                embed = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
-                embed.add_field(name="👤 Peserta", value=f"**{self.ign_input.value}**", inline=True)
-                embed.add_field(name="🛡️ Club", value=self.club_input.value, inline=True)
-                embed.add_field(name="🆔 ID Game", value=self.id_input.value, inline=False)
-                embed.add_field(name="⏱️ Waktu", value=f"`{self.waktu_input.value}`", inline=False)
-                embed.set_image(url=screenshot_url)
-                embed.set_footer(text="Pesan asli pengirim dihapus otomatis.")
-                await interaction.channel.send(embed=embed)
-            else:
-                # Update waktu submit terakhir saja jika waktu tidak lebih baik
-                collection.update_one({"_id": user.id}, {"$set": {"last_submit": now}})
-                await interaction.followup.send(f"❌ Waktu tidak lebih baik dari rekor sebelumnya.", ephemeral=True)
+                pass
 
         except asyncio.TimeoutError:
-            await interaction.followup.send("⚠️ Waktu habis. Data gagal dicatat.", ephemeral=True)
+            await interaction.followup.send("⚠️ Waktu upload habis (60 detik). Silakan ulangi submit.", ephemeral=True)
 
-# --- SISTEM NAVIGASI ---
+# --- SISANYA TETAP SAMA ---
 class LeaderboardPagination(ui.View):
     def __init__(self, current_page=1):
         super().__init__(timeout=60)
         self.current_page = current_page
-
     @ui.button(label='⬅️ Prev', style=discord.ButtonStyle.blurple)
     async def prev_button(self, interaction: discord.Interaction, button: ui.Button):
         if self.current_page > 1:
             self.current_page -= 1
             embed, _ = create_leaderboard_embed(self.current_page)
             await interaction.response.edit_message(embed=embed, view=self)
-
     @ui.button(label='Next ➡️', style=discord.ButtonStyle.blurple)
     async def next_button(self, interaction: discord.Interaction, button: ui.Button):
         embed, total_pages = create_leaderboard_embed(self.current_page + 1)
         if self.current_page < total_pages:
             self.current_page += 1
             await interaction.response.edit_message(embed=embed, view=self)
-
     @ui.button(label='🏠 Menu', style=discord.ButtonStyle.red)
     async def back_to_menu(self, interaction: discord.Interaction, button: ui.Button):
         embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
@@ -138,11 +139,9 @@ class LeaderboardPagination(ui.View):
 class PersistentView(ui.View):
     def __init__(self):
         super().__init__(timeout=None) 
-
     @ui.button(label='Submit Your Time', style=discord.ButtonStyle.green, custom_id='submit_btn')
     async def submit_button(self, interaction: discord.Interaction, button: ui.Button):
         await interaction.response.send_modal(SubmitModal())
-
     @ui.button(label='View Leaderboard', style=discord.ButtonStyle.grey, custom_id='leaderboard_btn')
     async def leaderboard_button(self, interaction: discord.Interaction, button: ui.Button):
         embed, _ = create_leaderboard_embed(page=1)
