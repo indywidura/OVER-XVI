@@ -60,7 +60,6 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
         user = interaction.user
         now = datetime.datetime.now()
         
-        # Data dari Modal
         ign = self.ign_input.value
         game_id = self.id_input.value
         club = self.club_input.value
@@ -104,10 +103,10 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
                 embed.add_field(name="IGN", value=ign, inline=True)
                 embed.add_field(name="Club", value=club, inline=True)
                 embed.add_field(name="Waktu", value=f"`{waktu}`", inline=True)
-                embed.add_field(name="ID Game", value=game_id, inline=False)
                 embed.set_image(url=screenshot_url)
                 await interaction.channel.send(embed=embed)
             else:
+                # Update cooldown meski rekor tidak pecah
                 collection.update_one({"_id": user.id}, {"$set": {"last_submit": now}})
                 await interaction.followup.send(f"❌ Waktu tidak lebih baik dari rekor terbaikmu.", ephemeral=True)
 
@@ -136,7 +135,7 @@ class LeaderboardPagination(ui.View):
 
     @ui.button(label='🏠 Kembali ke Menu', style=discord.ButtonStyle.red)
     async def back_to_menu(self, interaction: discord.Interaction, button: ui.Button):
-        embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", description="Pilih opsi di bawah:", color=0x2ecc71)
+        embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
         await interaction.response.edit_message(embed=embed, view=PersistentView())
 
 class PersistentView(ui.View):
@@ -171,70 +170,5 @@ async def del_ta(ctx, *, name: str):
     else:
         await ctx.send(f"❓ IGN **{name}** tidak ditemukan.")
 
-bot.run(TOKEN)                collection.update_one({"_id": user.id}, {"$set": {"last_submit": now}})
-                await interaction.followup.send(f"❌ Waktu `{waktu}` tidak lebih baik dari rekor terbaikmu.", ephemeral=True)
-
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⚠️ Waktu habis. Bukti screenshot tidak diunggah, data gagal dicatat.", ephemeral=True)
-
-# --- VIEW NAVIGASI & MENU ---
-class LeaderboardPagination(ui.View):
-    def __init__(self, current_page=1):
-        super().__init__(timeout=60)
-        self.current_page = current_page
-
-    @ui.button(label='⬅️ Prev', style=discord.ButtonStyle.blurple)
-    async def prev_button(self, interaction: discord.Interaction, button: ui.Button):
-        if self.current_page > 1:
-            self.current_page -= 1
-            embed, _ = create_leaderboard_embed(self.current_page)
-            await interaction.response.edit_message(embed=embed, view=self)
-
-    @ui.button(label='Next ➡️', style=discord.ButtonStyle.blurple)
-    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
-        embed, total_pages = create_leaderboard_embed(self.current_page + 1)
-        if self.current_page < total_pages:
-            self.current_page += 1
-            await interaction.response.edit_message(embed=embed, view=self)
-
-    @ui.button(label='🏠 Kembali ke Menu', style=discord.ButtonStyle.red)
-    async def back_to_menu(self, interaction: discord.Interaction, button: ui.Button):
-        """Tombol kembali ke menu awal"""
-        embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", description="Silakan pilih menu di bawah:", color=0x2ecc71)
-        await interaction.response.edit_message(embed=embed, view=PersistentView())
-
-class PersistentView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None) 
-
-    @ui.button(label='Submit Your Time', style=discord.ButtonStyle.green, custom_id='submit_btn')
-    async def submit_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(SubmitModal())
-
-    @ui.button(label='View Leaderboard', style=discord.ButtonStyle.grey, custom_id='leaderboard_btn')
-    async def leaderboard_button(self, interaction: discord.Interaction, button: ui.Button):
-        embed, _ = create_leaderboard_embed(page=1)
-        await interaction.response.send_message(embed=embed, view=LeaderboardPagination(1), ephemeral=True)
-
-@bot.event
-async def on_ready():
-    bot.add_view(PersistentView()) 
-    print(f'Bot {bot.user.name} online!')
-
-@bot.command()
-async def setup_ta(ctx):
-    embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
-    await ctx.send(embed=embed, view=PersistentView())
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def del_ta(ctx, *, name: str):
-    """Fitur hapus data peserta untuk Admin"""
-    result = collection.delete_one({"user_name": {"$regex": f"^{name}$", "$options": "i"}})
-    if result.deleted_count > 0:
-        await ctx.send(f"🗑️ Data **{name}** telah dihapus dari database.")
-    else:
-        await ctx.send(f"❓ Nama **{name}** tidak ditemukan.")
-
-# BARIS PALING AKHIR: Pastikan tidak ada karakter apapun setelah ini
+# BARIS TERAKHIR - JANGAN ADA APAPUN DI SEBELAH/DIBAWAHNYA
 bot.run(TOKEN)
