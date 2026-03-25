@@ -39,7 +39,7 @@ class LeaderboardView(ui.View):
         self.data = data
         self.event_name = event_name
         self.page = page
-        self.per_page = 10 # Tampilkan 10 data per halaman
+        self.per_page = 10
 
     def create_embed(self):
         start = self.page * self.per_page
@@ -55,7 +55,8 @@ class LeaderboardView(ui.View):
         
         embed = discord.Embed(title=f"🏆 LEADERBOARD: #{self.event_name}", 
                               description=desc or "Tidak ada data.", color=0xf1c40f)
-        embed.set_footer(text=f"Halaman {self.page + 1} dari {(len(self.data)-1)//self.per_page + 1}")
+        total_pages = (len(self.data)-1)//self.per_page + 1 if len(self.data) > 0 else 1
+        embed.set_footer(text=f"Halaman {self.page + 1} dari {total_pages}")
         return embed
 
     @ui.button(label="⬅️ Prev", style=discord.ButtonStyle.grey)
@@ -96,17 +97,17 @@ class SubmitModal(ui.Modal, title="Submit Time"):
     async def on_submit(self, i: discord.Interaction):
         sec = parse_time(self.time_val.value)
         if sec is None or sec < 10:
-            return await i.response.send_message("❌ Format salah!", ephemeral=True)
+            return await i.response.send_message("❌ Format salah! Gunakan MM:SS.ms", ephemeral=True)
 
         event_name = i.channel.name
-        await i.response.send_message("📸 Upload screenshot sekarang.", ephemeral=True)
+        await i.response.send_message("📸 Silahkan kirim screenshot hasil balapan kamu di channel ini.", ephemeral=True)
 
         def check(m): return m.author.id == i.user.id and m.attachments
         try:
             msg = await bot.wait_for("message", timeout=60, check=check)
             img = await msg.attachments[0].read()
             
-            # FITUR: Hapus gambar asli peserta agar chat bersih
+            # FITUR: Langsung hapus gambar asli dari peserta
             try: await msg.delete()
             except: pass
 
@@ -119,7 +120,6 @@ class SubmitModal(ui.Modal, title="Submit Time"):
             col.update_one({"user_id": i.user.id, "event": event_name}, {"$set": data}, upsert=True)
             history.insert_one({"user_id": i.user.id, "event": event_name, "time": self.time_val.value, "raw": sec, "date": datetime.datetime.now()})
 
-            # Embed Hasil Sesuai Gambar 2
             embed = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
             embed.add_field(name="👤 Peserta", value=self.ign.value, inline=False)
             embed.add_field(name="🛡️ Club", value=self.club.value, inline=False)
@@ -132,7 +132,7 @@ class SubmitModal(ui.Modal, title="Submit Time"):
             await i.channel.send(file=file, embed=embed)
 
         except asyncio.TimeoutError:
-            await i.followup.send("❌ Waktu habis.", ephemeral=True)
+            await i.followup.send("❌ Waktu upload habis.", ephemeral=True)
 
 # ================= MAIN UI =================
 class MainView(ui.View):
@@ -153,15 +153,49 @@ class MainView(ui.View):
 
     @ui.button(label="📖 Help", style=discord.ButtonStyle.grey, custom_id="btn_help")
     async def help_btn(self, i: discord.Interaction, b: ui.Button):
-        embed = discord.Embed(title="📖 HELP MENU", color=0x3498db)
-        embed.add_field(name="Format", value="Wajib `MM:SS.ms` (Contoh: `00:46.000`)", inline=False)
-        embed.add_field(name="Channel", value="Bot merekam data berdasarkan nama channel otomatis.", inline=False)
+        embed = discord.Embed(title="📖 PANDUAN PERINTAH BOT", color=0x3498db)
+        
+        # Penjelasan Command yang diperjelas
+        embed.add_field(
+            name="🏎️ Perintah Player", 
+            value="`!ta` - Memunculkan Panel Utama untuk Submit dan Leaderboard.\n`!help` - Menampilkan menu bantuan ini.", 
+            inline=False
+        )
+        embed.add_field(
+            name="🛠️ Perintah Admin", 
+            value="`!del_player <IGN/ID>` - Menghapus data player tertentu dari database.\n`!delete_event <nama>` - Menghapus seluruh record pada event/channel tertentu.", 
+            inline=False
+        )
+        embed.add_field(
+            name="📝 Aturan Format", 
+            value="• **Waktu:** Harus `MM:SS.ms` (Contoh: `00:46.000`).\n• **Event:** Otomatis mengikuti nama channel Discord saat ini.\n• **Screenshot:** Wajib dikirim setelah mengisi formulir (Max 60 detik).", 
+            inline=False
+        )
+        embed.set_footer(text="OVER-XVI System v2.1")
         await i.response.edit_message(content=None, embed=embed, view=HelpView())
 
 # ================= COMMANDS =================
 @bot.command()
 async def ta(ctx):
     await ctx.send("🏎️ **PANEL UTAMA**", view=MainView())
+
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(title="📖 HELP MENU", description="Gunakan perintah `!ta` untuk mengakses fitur utama.", color=0x3498db)
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def delete_event(ctx, name):
+    col.delete_many({"event": name})
+    await ctx.send(f"🗑️ Data event `{name}` berhasil dihapus.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def del_player(ctx, *, target: str):
+    query = {"$or": [{"user_id": int(target) if target.isdigit() else 0}, {"ign": target}]}
+    col.delete_many(query)
+    await ctx.send(f"🗑️ Player `{target}` berhasil dihapus.")
 
 @bot.event
 async def on_ready():
