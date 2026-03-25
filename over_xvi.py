@@ -28,7 +28,7 @@ def create_leaderboard_embed(page=1):
     total_pages = math.ceil(total_results / items_per_page) or 1
     
     if not results:
-        return discord.Embed(title="⏱️ LEADERBOARD", description="Belum ada data.", color=0xff0000), 1
+        return discord.Embed(title="⏱️ LEADERBOARD", description="Belum ada data peserta.", color=0xff0000), 1
 
     start = (page - 1) * items_per_page
     end = start + items_per_page
@@ -49,23 +49,18 @@ def create_leaderboard_embed(page=1):
     
     return embed, total_pages
 
-# --- KELAS MODAL (Input Lengkap: Waktu, IGN, ID, Club) ---
+# --- KELAS MODAL (Input: IGN, ID, Club, Waktu) ---
 class SubmitModal(ui.Modal, title='Submit Time Attack'):
-    ign_input = ui.TextInput(label='Nama In-Game (IGN)', placeholder='Contoh: APEX_Legend', min_length=2, max_length=30)
-    id_input = ui.TextInput(label='ID In-Game', placeholder='Contoh: 12345678', min_length=5, max_length=20)
+    ign_input = ui.TextInput(label='Nama In-Game (IGN)', placeholder='Contoh: RFF•SuperFae', min_length=2, max_length=30)
+    id_input = ui.TextInput(label='ID In-Game', placeholder='Masukkan ID Akun Anda', min_length=5, max_length=20)
     club_input = ui.TextInput(label='Nama Club', placeholder='Contoh: APEX', min_length=2, max_length=20)
-    waktu_input = ui.TextInput(label='Waktu (MM:SS.ms)', placeholder='Contoh: 00:05.123', min_length=5, max_length=12)
+    waktu_input = ui.TextInput(label='Waktu (MM:SS.ms)', placeholder='Contoh: 01:35.34', min_length=5, max_length=12)
 
     async def on_submit(self, interaction: discord.Interaction):
         user = interaction.user
         now = datetime.datetime.now()
         
-        ign = self.ign_input.value
-        game_id = self.id_input.value
-        club = self.club_input.value
-        waktu = self.waktu_input.value
-
-        # Cek Cooldown 10 Menit
+        # Validasi Cooldown 10 Menit
         user_data = collection.find_one({"_id": user.id})
         if user_data and "last_submit" in user_data:
             diff = now - user_data["last_submit"]
@@ -74,7 +69,7 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
                 await interaction.response.send_message(f"⏳ **Cooldown!** Tunggu **{sisa} menit** lagi.", ephemeral=True)
                 return
 
-        await interaction.response.send_message(f"✅ Data diterima! Segera unggah screenshot bukti di chat ini (60 detik).", ephemeral=True)
+        await interaction.response.send_message(f"✅ Data diterima! Silakan unggah screenshot bukti di chat ini (Waktu: 60 detik).", ephemeral=True)
 
         def check(m):
             return m.author == user and m.channel == interaction.channel and len(m.attachments) > 0
@@ -83,37 +78,39 @@ class SubmitModal(ui.Modal, title='Submit Time Attack'):
             msg = await bot.wait_for('message', timeout=60.0, check=check)
             screenshot_url = msg.attachments[0].url
             
-            if user_data is None or waktu < user_data["waktu"]:
+            # Cek apakah waktu lebih baik
+            if user_data is None or self.waktu_input.value < user_data["waktu"]:
                 collection.update_one(
                     {"_id": user.id},
                     {
                         "$set": {
                             "user_name": user.display_name,
-                            "ign": ign,
-                            "game_id": game_id,
-                            "club": club,
-                            "waktu": waktu,
+                            "ign": self.ign_input.value,
+                            "game_id": self.id_input.value,
+                            "club": self.club_input.value,
+                            "waktu": self.waktu_input.value,
                             "last_submit": now
                         }
                     },
                     upsert=True
                 )
                 
-                embed = discord.Embed(title="📸 BUKTI REKOR BARU", color=0x2ecc71)
-                embed.add_field(name="IGN", value=ign, inline=True)
-                embed.add_field(name="Club", value=club, inline=True)
-                embed.add_field(name="Waktu", value=f"`{waktu}`", inline=True)
+                # Menampilkan ID di Embed
+                embed = discord.Embed(title="🌟 BUKTI REKOR BARU", color=0x2ecc71)
+                embed.add_field(name="IGN", value=self.ign_input.value, inline=False)
+                embed.add_field(name="ID Game", value=self.id_input.value, inline=False)
+                embed.add_field(name="Club", value=self.club_input.value, inline=False)
+                embed.add_field(name="Waktu", value=f"`{self.waktu_input.value}`", inline=False)
                 embed.set_image(url=screenshot_url)
                 await interaction.channel.send(embed=embed)
             else:
-                # Update cooldown meski rekor tidak pecah
                 collection.update_one({"_id": user.id}, {"$set": {"last_submit": now}})
                 await interaction.followup.send(f"❌ Waktu tidak lebih baik dari rekor terbaikmu.", ephemeral=True)
 
         except asyncio.TimeoutError:
             await interaction.followup.send("⚠️ Waktu habis. Data gagal dicatat.", ephemeral=True)
 
-# --- VIEW NAVIGASI & MENU ---
+# --- VIEW NAVIGASI ---
 class LeaderboardPagination(ui.View):
     def __init__(self, current_page=1):
         super().__init__(timeout=60)
@@ -133,7 +130,7 @@ class LeaderboardPagination(ui.View):
             self.current_page += 1
             await interaction.response.edit_message(embed=embed, view=self)
 
-    @ui.button(label='🏠 Kembali ke Menu', style=discord.ButtonStyle.red)
+    @ui.button(label='🏠 Menu', style=discord.ButtonStyle.red)
     async def back_to_menu(self, interaction: discord.Interaction, button: ui.Button):
         embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
         await interaction.response.edit_message(embed=embed, view=PersistentView())
@@ -159,16 +156,17 @@ async def on_ready():
 @bot.command()
 async def setup_ta(ctx):
     embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", color=0x2ecc71)
+    embed.description = "Klik tombol di bawah untuk mendaftarkan waktu terbaik kamu!"
     await ctx.send(embed=embed, view=PersistentView())
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def del_ta(ctx, *, name: str):
-    result = collection.delete_one({"ign": {"$regex": f"^{name}$", "$options": "i"}})
+async def del_ta(ctx, *, ign_name: str):
+    result = collection.delete_one({"ign": {"$regex": f"^{ign_name}$", "$options": "i"}})
     if result.deleted_count > 0:
-        await ctx.send(f"🗑️ Data IGN **{name}** dihapus.")
+        await ctx.send(f"🗑️ Data IGN **{ign_name}** dihapus.")
     else:
-        await ctx.send(f"❓ IGN **{name}** tidak ditemukan.")
+        await ctx.send(f"❓ IGN **{ign_name}** tidak ditemukan.")
 
-# BARIS TERAKHIR - JANGAN ADA APAPUN DI SEBELAH/DIBAWAHNYA
+# BARIS PALING AKHIR
 bot.run(TOKEN)
