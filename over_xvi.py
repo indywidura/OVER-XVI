@@ -22,14 +22,13 @@ collection = db["timeattack"]
 # --- FUNGSI PEMBUAT EMBED LEADERBOARD (PAGINATION) ---
 def create_leaderboard_embed(page=1):
     items_per_page = 10
-    results = list(collection.find().sort("waktu", 1))
+    results = list(collection.find().sort("waktu", 1)) # Mengambil seluruh data
     total_results = len(results)
     total_pages = math.ceil(total_results / items_per_page) or 1
     
     if not results:
         return discord.Embed(title="⏱️ LEADERBOARD", description="Belum ada data.", color=0xff0000), 1
 
-    # Mengambil potongan data untuk halaman tertentu
     start = (page - 1) * items_per_page
     end = start + items_per_page
     current_page_data = results[start:end]
@@ -48,10 +47,38 @@ def create_leaderboard_embed(page=1):
     
     return embed, total_pages
 
-# --- VIEW KHUSUS UNTUK NAVIGASI HALAMAN ---
+# --- KELAS MODAL (Input Waktu) ---
+class SubmitModal(ui.Modal, title='Submit Time Attack'):
+    waktu_input = ui.TextInput(
+        label='Masukkan Waktu (Contoh: 00:05.123)',
+        placeholder='MM:SS.ms',
+        min_length=5,
+        max_length=12,
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        user_name = interaction.user.display_name
+        waktu = self.waktu_input.value
+        tanggal = datetime.datetime.now().strftime("%d/%m/%Y")
+
+        user_data = collection.find_one({"_id": user_id})
+
+        if user_data is None or waktu < user_data["waktu"]:
+            collection.update_one(
+                {"_id": user_id},
+                {"$set": {"user_name": user_name, "waktu": waktu, "tanggal": tanggal}},
+                upsert=True
+            )
+            await interaction.response.send_message(f"✅ **{user_name}**, rekor baru dicatat: `{waktu}`!", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Waktu `{waktu}` lebih lambat dari rekor terbaikmu (`{user_data['waktu']}`).", ephemeral=True)
+
+# --- VIEW NAVIGASI LEADERBOARD (Next, Prev, Back) ---
 class LeaderboardPagination(ui.View):
     def __init__(self, current_page=1):
-        super().__init__(timeout=60) # Tombol navigasi mati setelah 60 detik tidak aktif
+        super().__init__(timeout=60)
         self.current_page = current_page
 
     @ui.button(label='⬅️ Prev', style=discord.ButtonStyle.blurple)
@@ -72,25 +99,22 @@ class LeaderboardPagination(ui.View):
         else:
             await interaction.response.send_message("Ini sudah halaman terakhir!", ephemeral=True)
 
-# --- MODAL SUBMIT ---
-class SubmitModal(ui.Modal, title='Submit Time Attack'):
-    waktu_input = ui.TextInput(label='Waktu (MM:SS.ms)', placeholder='00:05.123', min_length=5, max_length=12)
+    @ui.button(label='🏠 Kembali ke Menu', style=discord.ButtonStyle.red)
+    async def back_to_menu(self, interaction: discord.Interaction, button: ui.Button):
+        # Menampilkan kembali menu utama
+        embed = discord.Embed(
+            title="🏎️ TIME ATTACK COMPETITION",
+            description="Klik tombol di bawah untuk berpartisipasi!\n\n"
+                        "🟢 **Submit Your Time**: Kirim rekor waktu terbaru.\n"
+                        "⚪ **View Leaderboard**: Lihat klasemen saat ini.",
+            color=0x2ecc71
+        )
+        await interaction.response.edit_message(embed=embed, view=PersistentView())
 
-    async def on_submit(self, interaction: discord.Interaction):
-        user_id, user_name, waktu = interaction.user.id, interaction.user.display_name, self.waktu_input.value
-        tanggal = datetime.datetime.now().strftime("%d/%m/%Y")
-        
-        user_data = collection.find_one({"_id": user_id})
-        if user_data is None or waktu < user_data["waktu"]:
-            collection.update_one({"_id": user_id}, {"$set": {"user_name": user_name, "waktu": waktu, "tanggal": tanggal}}, upsert=True)
-            await interaction.response.send_message(f"✅ Rekor dicatat: `{waktu}`!", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"❌ Waktumu `{waktu}` lebih lambat dari rekor terbaikmu.", ephemeral=True)
-
-# --- VIEW UTAMA (DI CHANNEL) ---
+# --- VIEW UTAMA (Persistent) ---
 class PersistentView(ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(timeout=None) # Tombol tetap aktif walau bot restart
 
     @ui.button(label='Submit Your Time', style=discord.ButtonStyle.green, custom_id='submit_btn')
     async def submit_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -98,37 +122,25 @@ class PersistentView(ui.View):
 
     @ui.button(label='View Leaderboard', style=discord.ButtonStyle.grey, custom_id='leaderboard_btn')
     async def leaderboard_button(self, interaction: discord.Interaction, button: ui.Button):
-        embed, total_pages = create_leaderboard_embed(page=1)
-        # Menampilkan leaderboard dengan tombol navigasi (hanya bisa dilihat pengklik)
+        # Menampilkan halaman 1 leaderboard dengan tombol navigasi
+        embed, _ = create_leaderboard_embed(page=1)
         await interaction.response.send_message(embed=embed, view=LeaderboardPagination(1), ephemeral=True)
 
 @bot.event
 async def on_ready():
-    bot.add_view(PersistentView())
-    print(f'Bot {bot.user.name} Siap!')
+    bot.add_view(PersistentView()) # Mendaftarkan view persistent
+    print(f'Bot {bot.user.name} online dan siap digunakan!')
 
 @bot.command()
 async def setup_ta(ctx):
-    embed = discord.Embed(title="🏎️ TIME ATTACK COMPETITION", description="Klik tombol di bawah untuk berpartisipasi!", color=0x2ecc71)
-    await ctx.send(embed=embed, view=PersistentView())
-
-bot.run(TOKEN)
-# --- PERINTAH SETUP ---
-@bot.command()
-async def setup_ta(ctx):
+    """Panggil ini sekali di channel lomba"""
     embed = discord.Embed(
         title="🏎️ TIME ATTACK COMPETITION",
-        description="Gunakan tombol di bawah untuk interaksi:\n\n"
+        description="Klik tombol di bawah untuk berpartisipasi!\n\n"
                     "🟢 **Submit Your Time**: Kirim rekor waktu terbaru.\n"
-                    "⚪ **View Leaderboard**: Lihat 10 besar klasemen saat ini.",
+                    "⚪ **View Leaderboard**: Lihat klasemen saat ini.",
         color=0x2ecc71
     )
     await ctx.send(embed=embed, view=PersistentView())
-
-# --- PERINTAH TAMPILKAN LEADERBOARD (Tetap ada sebagai cadangan) ---
-@bot.command()
-async def timeattack(ctx):
-    embed = get_leaderboard_embed()
-    await ctx.send(embed=embed)
 
 bot.run(TOKEN)
