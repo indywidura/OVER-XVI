@@ -6,7 +6,7 @@ import datetime
 
 # --- KONFIGURASI ---
 TOKEN = 'MTQ4NjE1MTQ4NzUxOTQ1NzM2MA.GerHXg.UA69z1BlBK0aGtY63FEZo1dU9iSHn-TgtHl0i8'
-MONGO_URL = ""mongodb+srv://time-attack1:01010101@cluster0.smztndb.mongodb.net/?appName=Cluster0""
+MONGO_URL = "mongodb+srv://time-attack1:01010101@cluster0.smztndb.mongodb.net/?appName=Cluster0"
 
 intents = discord.Intents.default()
 intents.message_content = True
