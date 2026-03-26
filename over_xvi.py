@@ -51,14 +51,39 @@ def parse_time(t):
         return int(m)*60 + int(s) + float(f"0.{ms}")
     except: 
         return None
+# ================= UTILS & OCR ENGINE =================
 
 def scan_time(image_bytes):
-    """Fungsi AI Tesseract untuk membaca angka di screenshot"""
+    """Fungsi AI Tesseract yang dioptimalkan untuk membaca angka di screenshot game"""
     try:
+        # Import tambahan untuk pemrosesan gambar agar lebih tajam
+        from PIL import Image, ImageOps, ImageEnhance
+        
+        # Buka gambar dan ubah ke skala abu-abu (Greyscale)
         img = Image.open(io.BytesIO(image_bytes)).convert('L') 
-        text = pytesseract.image_to_string(img)
+        
+        # Pre-processing: Meningkatkan kontras agar angka lebih hitam-putih tajam
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(2.5) # Menaikkan kontras 2.5x
+        
+        # Melakukan scan teks dengan konfigurasi PSM 6 (mengasumsikan blok teks seragam)
+        text = pytesseract.image_to_string(img, config='--psm 6')
+        
+        # Mencari pola MM:SS.ms (contoit: 01:12.188)
         match = re.search(r'\d{2}:\d{2}\.\d{3}', text)
         return match.group(0) if match else None
+    except Exception as e:
+        print(f"OCR Error: {e}")
+        return None
+
+def parse_time(t):
+    """Mengubah format MM:SS.ms ke total detik untuk sorting"""
+    if not re.match(r'^\d{2}:\d{2}\.\d{3}$', t): 
+        return None
+    try:
+        m, s_ms = t.split(":")
+        s, ms = s_ms.split(".")
+        return int(m)*60 + int(s) + float(f"0.{ms}")
     except: 
         return None
 
