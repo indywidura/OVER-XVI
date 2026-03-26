@@ -183,6 +183,22 @@ class ApprovalView(ui.View):
         col.delete_one({"_id": self.entry_id})
         await i.response.edit_message(content="❌ Data Driver ditolak dan dihapus.", embed=None, view=None)
 
+class DeletePlayerModal(ui.Modal):
+    def __init__(self, event_name):
+        super().__init__(title="Hapus Driver dari Leaderboard")
+        self.event_name = event_name
+        self.target = ui.TextInput(label="Masukkan IGN Player", placeholder="Ketik Nickname yang ingin dihapus...")
+        self.add_item(self.target)
+
+    async def on_submit(self, i: discord.Interaction):
+        # Menghapus data dari MongoDB
+        result = col.delete_one({"event": self.event_name, "ign": {"$regex": f"^{self.target.value}$", "$options": "i"}})
+        
+        if result.deleted_count > 0:
+            await i.response.send_message(f"✅ Player **{self.target.value}** telah dihapus.", ephemeral=True)
+        else:
+            await i.response.send_message(f"❌ Player **{self.target.value}** tidak ditemukan.", ephemeral=True)
+
 class LeaderboardView(ui.View):
     def __init__(self, event_name, page=0):
         super().__init__(timeout=60)
@@ -191,6 +207,7 @@ class LeaderboardView(ui.View):
 
     async def get_stats(self):
         skip_val = self.page * 10
+        # Mengambil data top 10 berdasarkan page
         data = list(col.find({"event": self.event_name, "approved": True}).sort("waktu_raw", 1).skip(skip_val).limit(10))
         total_data = col.count_documents({"event": self.event_name, "approved": True})
         total_pages = (total_data - 1) // 10 + 1 if total_data else 1
@@ -200,6 +217,7 @@ class LeaderboardView(ui.View):
         description = ""
         for idx, d in enumerate(data):
             rank = (self.page * 10) + idx + 1
+            # Menampilkan Nickname, Club, dan Waktu
             description += f"**{rank}.** {d['ign']} [{d.get('club', 'Endgame')}] - `{d['waktu']}`\n"
         
         emb = discord.Embed(
@@ -210,7 +228,7 @@ class LeaderboardView(ui.View):
         emb.set_footer(text=f"Halaman {self.page + 1} dari {pages}")
         return emb
 
-    @ui.button(label="⬅️ Sebelumnya", style=discord.ButtonStyle.grey)
+    @ui.button(label="⬅️", style=discord.ButtonStyle.grey)
     async def prev(self, i, b):
         if self.page > 0:
             self.page -= 1
@@ -219,7 +237,7 @@ class LeaderboardView(ui.View):
         else: 
             await i.response.defer()
 
-    @ui.button(label="Selanjutnya ➡️", style=discord.ButtonStyle.grey)
+    @ui.button(label="➡️", style=discord.ButtonStyle.grey)
     async def next(self, i, b):
         d, p = await self.get_stats()
         if self.page < p - 1:
@@ -229,9 +247,24 @@ class LeaderboardView(ui.View):
         else: 
             await i.response.defer()
 
-    @ui.button(label="🔍 Cari Player", style=discord.ButtonStyle.blurple)
+    @ui.button(label="🔍 Cari", style=discord.ButtonStyle.blurple)
     async def search(self, i, b): 
         await i.response.send_modal(SearchPlayerModal(self.event_name))
+
+    @ui.button(label="🗑️ Hapus Player", style=discord.ButtonStyle.danger)
+    async def delete_player(self, i, b):
+        # Cek apakah user adalah Admin
+        if not i.user.guild_permissions.administrator:
+            return await i.response.send_message("❌ Hanya Admin yang bisa menghapus player!", ephemeral=True)
+        
+        # Kirim modal pencarian khusus untuk menghapus
+        await i.response.send_modal(DeletePlayerModal(self.event_name))
+
+    @ui.button(label="🏠 Menu", style=discord.ButtonStyle.green)
+    async def home(self, i, b):
+        # Balik ke tampilan awal (Submit Time / Leaderboard)
+        emb = discord.Embed(title=f"🏎️ EVENT: {self.event_name.upper()}", description="Pilih menu di bawah:", color=0x3498db)
+        await i.response.edit_message(embed=emb, view=MainView(self.event_name))
 
 class AdminMenuView(ui.View):
     def __init__(self, event_name):
@@ -244,22 +277,28 @@ class AdminMenuView(ui.View):
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["RANK", "IGN", "CLUB", "GAME ID", "TIME", "STATUS"])
-        
         for idx, d in enumerate(data):
             status = "Approved" if d.get('approved') else "Pending"
             writer.writerow([idx+1, d['ign'], d.get('club','-'), d.get('game_id','-'), d['waktu'], status])
         
         file_data = io.BytesIO(output.getvalue().encode())
-        await i.response.send_message(
-            content=f"📊 Rekap Data {self.event_name}:", 
-            file=discord.File(file_data, f"{self.event_name}.csv"), 
-            ephemeral=True
-        )
+        await i.response.send_message(content=f"📊 Rekap Data {self.event_name}:", file=discord.File(file_data, f"{self.event_name}.csv"), ephemeral=True)
+
+    @ui.button(label="🗑️ Hapus Per Driver", style=discord.ButtonStyle.grey)
+    async def delete_single(self, i, b):
+        # Tombol ini akan memandu admin cara hapus satuan
+        await i.response.send_message("💡 Untuk menghapus satu player, gunakan tombol **Cari Player** di Leaderboard, lalu pilih hapus dari sana (atau gunakan perintah manual jika diperlukan).", ephemeral=True)
 
     @ui.button(label="🚨 Reset Semua Data", style=discord.ButtonStyle.danger)
     async def clear(self, i, b):
         col.delete_many({"event": self.event_name})
-        await i.response.send_message("❌ Leaderboard telah dikosongkan secara permanen.", ephemeral=True)
+        await i.response.send_message("❌ Leaderboard telah dikosongkan!", ephemeral=True)
+
+    @ui.button(label="⬅️ Kembali ke Menu", style=discord.ButtonStyle.blurple)
+    async def back(self, i, b):
+        # Ini tombol untuk balik ke menu utama (Submit/Leaderboard)
+        emb = discord.Embed(title=f"🏎️ EVENT: {self.event_name.upper()}", description="Menu Utama", color=0x3498db)
+        await i.response.edit_message(embed=emb, view=MainView(self.event_name))
 
 class MainView(ui.View):
     def __init__(self, event_name):
