@@ -175,11 +175,19 @@ class ApprovalView(ui.View):
 
     @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i, b):
+        # TAMBAHKAN PENGECEKAN INI
+        if not i.user.guild_permissions.administrator:
+            return await i.response.send_message("❌ Kamu bukan Admin!", ephemeral=True)
+            
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True}})
         await i.response.edit_message(content="✅ Data Driver telah disetujui!", embed=None, view=None)
 
     @ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
     async def reject(self, i, b):
+        # TAMBAHKAN PENGECEKAN INI
+        if not i.user.guild_permissions.administrator:
+            return await i.response.send_message("❌ Kamu bukan Admin!", ephemeral=True)
+
         col.delete_one({"_id": self.entry_id})
         await i.response.edit_message(content="❌ Data Driver ditolak dan dihapus.", embed=None, view=None)
 
