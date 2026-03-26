@@ -189,19 +189,21 @@ class SubmitModal(ui.Modal):
             is_match = (detected == self.time_val.value)
             
             entry = {
-                "user_id": i.user.id, 
-                "event": self.event_name, 
-                "ign": self.ign.value, 
-                "club": self.club.value, 
-                "game_id": self.game_id.value, 
-                "waktu": self.time_val.value, 
-                "waktu_raw": sec, 
-                "approved": is_match, 
-                "timestamp": now
+            "user_id": i.user.id,
+            "discord_name": str(i.user), # Menyimpan Nama#0000 atau Global Name
+            "event": self.event_name,
+            "ign": self.ign.value,
+            "club": self.club.value,
+            "game_id": self.game_id.value,
+            "waktu": self.time_val.value,
+            "waktu_raw": sec,
+            "approved": is_match,
+            "timestamp": datetime.datetime.now()
             }
-            
+             
             col.update_one({"user_id": i.user.id, "event": self.event_name}, {"$set": entry}, upsert=True)
             doc = col.find_one({"user_id": i.user.id, "event": self.event_name})
+            res = col.update_one({"user_id": i.user.id, "event": self.event_name}, {"$set": entry}, upsert=True)
             
             file_img = discord.File(io.BytesIO(img_bytes), filename="evidence.png")
 
@@ -240,30 +242,26 @@ class ApprovalView(ui.View):
         await i.response.send_message("❌ Hanya Admin yang bisa Approve!", ephemeral=True)
         return False
 
-    @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
+   @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i, b):
-        # 1. Update status di Database
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True}})
-        
-        # 2. Ambil data driver yang baru saja disetujui
         data = col.find_one({"_id": self.entry_id})
         
         if data:
-            # 3. Buat Embed "REKOR BARU TERCATAT" (Sesuai Gambar 4)
             emb = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
-            emb.add_field(name="👤 Peserta", value=data['ign'], inline=False)
+            emb.add_field(name="👤 Peserta", value=f"**{data['ign']}**", inline=False)
             emb.add_field(name="🛡️ Club", value=data.get('club', 'ENDGAME'), inline=True)
             emb.add_field(name="🆔 ID Game", value=data.get('game_id', '-'), inline=True)
-            emb.add_field(name="⏱️ Waktu", value=f"{data['waktu']}", inline=False)
+            emb.add_field(name="⏱️ Waktu", value=f"`{data['waktu']}`", inline=False)
             
-            # Tambahkan logo bot/event di bagian bawah (Sesuai Gambar 4)
-            emb.set_image(url="https://your-image-link-here.png") # Ganti dengan link logo OVER-XVI kamu
-            emb.set_footer(text=f"Submitter: {i.user.display_name}")
+            # MENGGUNAKAN NAMA DISCORD PESERTA
+            submitter_discord = data.get('discord_name', 'Unknown User')
+            emb.set_footer(text=f"Submitter: {submitter_discord} | Approved by: {i.user.display_name}")
+            
+            # Ganti dengan link logo OVER-XVI jika ada
+            # emb.set_image(url="https://link-logo-kamu.png")
 
-            # 4. Ubah pesan antrean menjadi tampilan rekor tercatat
             await i.response.edit_message(content=None, embed=emb, view=None)
-        else:
-            await i.response.send_message("❌ Data tidak ditemukan di database.", ephemeral=True)
 
     @ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
     async def reject(self, i, b):
