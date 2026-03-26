@@ -138,28 +138,41 @@ class SubmitModal(ui.Modal):
     def __init__(self, event_name):
         super().__init__(title=f"📝 Submit: {event_name}")
         self.event_name = event_name
+        
+        # Form Input User
         self.ign = ui.TextInput(label="IGN (Nickname)", min_length=2, max_length=25)
         self.club = ui.TextInput(label="Club / Tim", default="ENDGAME", max_length=20)
         self.game_id = ui.TextInput(label="ID Game", placeholder="Contoh: 123456")
-        self.time_val = ui.TextInput(label="Waktu (MM:SS.ms)", placeholder="00:45.123")
+        self.time_val = ui.TextInput(label="Waktu (MM:SS.ms)", placeholder="01:12.188")
         
         for item in [self.ign, self.club, self.game_id, self.time_val]: 
             self.add_item(item)
 
     async def on_submit(self, i: discord.Interaction):
+        # 1. Validasi Format Waktu
         sec = parse_time(self.time_val.value)
         if not sec: 
-            return await i.response.send_message("❌ Format waktu salah! Gunakan MM:SS.ms", ephemeral=True)
+            return await i.response.send_message("❌ Format waktu salah! Gunakan **MM:SS.ms** (Contoh: 01:12.188)", ephemeral=True)
         
-        await i.response.send_message("📸 Silakan upload screenshot bukti balapan...", ephemeral=True)
+        await i.response.send_message("📸 Silakan upload screenshot bukti balapan (tunggu hingga bot merespon)...", ephemeral=True)
         
         try:
-            msg = await bot.wait_for("message", timeout=60, check=lambda m: m.author.id == i.user.id and m.attachments)
+            # 2. Menunggu User Upload Gambar
+            msg = await bot.wait_for(
+                "message", 
+                timeout=60, 
+                check=lambda m: m.author.id == i.user.id and m.attachments
+            )
+            
+            # Baca data gambar
             img_bytes = await msg.attachments[0].read()
             
+            # 3. Proses Scan AI (OCR)
             detected = scan_time(img_bytes)
+            # Bandingkan input user dengan hasil scan AI
             is_match = (detected == self.time_val.value)
             
+            # 4. Simpan Data ke Database (Status Pending jika tidak match)
             entry = {
                 "user_id": i.user.id, 
                 "event": self.event_name, 
@@ -172,32 +185,61 @@ class SubmitModal(ui.Modal):
                 "timestamp": datetime.datetime.now()
             }
             
-            col.update_one({"user_id": i.user.id, "event": self.event_name}, {"$set": entry}, upsert=True)
+            # Update atau Insert data baru
+            res = col.update_one(
+                {"user_id": i.user.id, "event": self.event_name}, 
+                {"$set": entry}, 
+                upsert=True
+            )
             
-            # Memproses File Gambar agar tidak pecah/expired
+            # Ambil ID dokumen untuk tombol Approve/Reject
+            doc = col.find_one({"user_id": i.user.id, "event": self.event_name})
+            entry_id = doc['_id']
+
+            # 5. Siapkan File Gambar untuk Dikirim Balik
             file_img = discord.File(io.BytesIO(img_bytes), filename="evidence.png")
 
             if is_match:
+                # TAMPILAN JIKA TERVERIFIKASI OTOMATIS
                 emb = discord.Embed(title="✅ TERVERIFIKASI OTOMATIS", color=0x2ecc71)
-                emb.add_field(name="Driver", value=f"**{self.ign.value}**", inline=True)
-                emb.add_field(name="Club", value=f"{self.club.value}", inline=True)
-                emb.add_field(name="Waktu", value=f"`{self.time_val.value}`", inline=False)
+                emb.add_field(name="👤 Driver", value=f"**{self.ign.value}**", inline=True)
+                emb.add_field(name="🛡️ Club", value=f"{self.club.value}", inline=True)
+                emb.add_field(name="⏱️ Waktu", value=f"`{self.time_val.value}`", inline=False)
                 emb.set_image(url="attachment://evidence.png")
+                
+                # Kirim ke channel publik (Urutan: Embed + File dulu baru Delete msg user)
                 await i.channel.send(embed=emb, file=file_img)
             else:
-                adm_emb = discord.Embed(title="📩 MENUNGGU PERSETUJUAN", color=0xf1c40f)
-                adm_emb.add_field(name="Driver", value=f"{self.ign.value} ({self.club.value})")
-                adm_emb.add_field(name="Waktu User", value=f"`{self.time_val.value}`", inline=True)
-                adm_emb.add_field(name="Scan AI", value=f"`{detected or 'Gagal'}`", inline=True)
+                # TAMPILAN JIKA BUTUH PERSETUJUAN ADMIN
+                adm_emb = discord.Embed(
+                    title="📩 MENUNGGU PERSETUJUAN ADMIN", 
+                    description="Waktu input tidak sama dengan hasil scan AI atau AI gagal membaca.",
+                    color=0xf1c40f
+                )
+                adm_emb.add_field(name="👤 Driver", value=f"{self.ign.value} ({self.club.value})")
+                adm_emb.add_field(name="⌨️ Input User", value=f"`{self.time_val.value}`", inline=True)
+                adm_emb.add_field(name="🤖 Scan AI", value=f"`{detected or 'Gagal'}`", inline=True)
                 adm_emb.set_image(url="attachment://evidence.png")
                 
-                doc = col.find_one({"user_id": i.user.id, "event": self.event_name})
-                await i.channel.send(content="🔔 **ANTREAN BARU:**", embed=adm_emb, file=file_img, view=ApprovalView(doc['_id']))
+                # Kirim ke channel dengan tombol ApprovalView
+                await i.channel.send(
+                    content="🔔 **ANTREAN BARU:**", 
+                    embed=adm_emb, 
+                    file=file_img, 
+                    view=ApprovalView(entry_id)
+                )
             
-            try: await msg.delete()
-            except: pass
-        except: 
-            await i.followup.send("❌ Sesi berakhir atau upload gagal.", ephemeral=True)
+            # 6. Hapus pesan gambar asli user agar channel tetap bersih
+            try: 
+                await msg.delete()
+            except: 
+                pass
+
+        except asyncio.TimeoutError:
+            await i.followup.send("❌ Waktu habis! Kamu tidak mengupload gambar dalam 60 detik.", ephemeral=True)
+        except Exception as e:
+            print(f"Error pada SubmitModal: {e}")
+            await i.followup.send("❌ Terjadi kesalahan saat memproses data.", ephemeral=True)
 
 # ================= INTERACTIVE VIEWS =================
 class ApprovalView(ui.View):
