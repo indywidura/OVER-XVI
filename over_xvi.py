@@ -75,7 +75,6 @@ class SearchPlayerModal(ui.Modal):
 
     async def on_submit(self, i: discord.Interaction):
         search_val = self.target.value.lower()
-        # Query database skala besar
         query = {
             "event": self.event_name, 
             "approved": True, 
@@ -88,7 +87,6 @@ class SearchPlayerModal(ui.Modal):
         
         if found_data:
             d = found_data[0]
-            # Menghitung rank secara matematis
             rank = col.count_documents({
                 "event": self.event_name, 
                 "approved": True, 
@@ -127,11 +125,9 @@ class SubmitModal(ui.Modal):
             msg = await bot.wait_for("message", timeout=60, check=lambda m: m.author.id == i.user.id and m.attachments)
             img_bytes = await msg.attachments[0].read()
             
-            # AI Verifikasi
             detected = scan_time(img_bytes)
             is_match = (detected == self.time_val.value)
             
-            # Data untuk database
             entry = {
                 "user_id": i.user.id, 
                 "event": self.event_name, 
@@ -146,23 +142,25 @@ class SubmitModal(ui.Modal):
             
             col.update_one({"user_id": i.user.id, "event": self.event_name}, {"$set": entry}, upsert=True)
             
+            # Memproses File Gambar agar tidak pecah/expired
+            file_img = discord.File(io.BytesIO(img_bytes), filename="evidence.png")
+
             if is_match:
                 emb = discord.Embed(title="✅ TERVERIFIKASI OTOMATIS", color=0x2ecc71)
                 emb.add_field(name="Driver", value=f"**{self.ign.value}**", inline=True)
                 emb.add_field(name="Club", value=f"{self.club.value}", inline=True)
                 emb.add_field(name="Waktu", value=f"`{self.time_val.value}`", inline=False)
-                emb.set_image(url=msg.attachments[0].url)
-                await i.channel.send(embed=emb)
+                emb.set_image(url="attachment://evidence.png")
+                await i.channel.send(embed=emb, file=file_img)
             else:
-                # Masuk Review Admin jika OCR beda
                 adm_emb = discord.Embed(title="📩 MENUNGGU PERSETUJUAN", color=0xf1c40f)
                 adm_emb.add_field(name="Driver", value=f"{self.ign.value} ({self.club.value})")
                 adm_emb.add_field(name="Waktu User", value=f"`{self.time_val.value}`", inline=True)
                 adm_emb.add_field(name="Scan AI", value=f"`{detected or 'Gagal'}`", inline=True)
-                adm_emb.set_image(url=msg.attachments[0].url)
+                adm_emb.set_image(url="attachment://evidence.png")
                 
                 doc = col.find_one({"user_id": i.user.id, "event": self.event_name})
-                await i.channel.send(content="🔔 **ANTREAN BARU:**", embed=adm_emb, view=ApprovalView(doc['_id']))
+                await i.channel.send(content="🔔 **ANTREAN BARU:**", embed=adm_emb, file=file_img, view=ApprovalView(doc['_id']))
             
             try: await msg.delete()
             except: pass
@@ -268,17 +266,17 @@ class MainView(ui.View):
         super().__init__(timeout=None)
         self.event_name = event_name
 
-    @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_submit_v3")
+    @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_submit_v4")
     async def submit_btn(self, i, b):
         await i.response.send_modal(SubmitModal(self.event_name))
 
-    @ui.button(label="Leaderboard", style=discord.ButtonStyle.blurple, custom_id="btn_lb_v3")
+    @ui.button(label="Leaderboard", style=discord.ButtonStyle.blurple, custom_id="btn_lb_v4")
     async def lb_btn(self, i, b):
         v = LeaderboardView(self.event_name)
         d, p = await v.get_stats()
         await i.response.edit_message(embed=v.create_embed(d, p), view=v)
 
-    @ui.button(label="Menu Admin", style=discord.ButtonStyle.grey, custom_id="btn_admin_v3")
+    @ui.button(label="Menu Admin", style=discord.ButtonStyle.grey, custom_id="btn_admin_v4")
     async def admin_btn(self, i, b):
         if not i.user.guild_permissions.administrator: 
             return await i.response.send_message("🚫 Khusus Admin!", ephemeral=True)
