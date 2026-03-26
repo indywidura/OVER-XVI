@@ -236,13 +236,13 @@ class ApprovalView(ui.View):
     def __init__(self, entry_id):
         super().__init__(timeout=None)
         self.entry_id = entry_id
-
+        
     async def interaction_check(self, i: discord.Interaction):
         if i.user.guild_permissions.administrator: return True
         await i.response.send_message("❌ Hanya Admin yang bisa Approve!", ephemeral=True)
         return False
 
-   @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
+    @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i, b):
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True}})
         data = col.find_one({"_id": self.entry_id})
@@ -258,7 +258,7 @@ class ApprovalView(ui.View):
             submitter_discord = data.get('discord_name', 'Unknown User')
             emb.set_footer(text=f"Submitter: {submitter_discord} | Approved by: {i.user.display_name}")
             
-            # Ganti dengan link logo OVER-XVI jika ada
+            # Tambahkan logo jika ada
             # emb.set_image(url="https://link-logo-kamu.png")
 
             await i.response.edit_message(content=None, embed=emb, view=None)
@@ -276,7 +276,6 @@ class DeletePlayerModal(ui.Modal):
         self.add_item(self.target)
 
     async def on_submit(self, i: discord.Interaction):
-        # Menghapus data dari MongoDB
         result = col.delete_one({"event": self.event_name, "ign": {"$regex": f"^{self.target.value}$", "$options": "i"}})
         
         if result.deleted_count > 0:
