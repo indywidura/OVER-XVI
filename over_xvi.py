@@ -247,23 +247,40 @@ class ApprovalView(ui.View):
         super().__init__(timeout=None)
         self.entry_id = entry_id
 
+    async def interaction_check(self, i: discord.Interaction):
+        if i.user.guild_permissions.administrator: return True
+        await i.response.send_message("❌ Hanya Admin yang bisa Approve!", ephemeral=True)
+        return False
+
     @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i, b):
-        # TAMBAHKAN PENGECEKAN INI
-        if not i.user.guild_permissions.administrator:
-            return await i.response.send_message("❌ Kamu bukan Admin!", ephemeral=True)
-            
+        # 1. Update status di Database
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True}})
-        await i.response.edit_message(content="✅ Data Driver telah disetujui!", embed=None, view=None)
+        
+        # 2. Ambil data driver yang baru saja disetujui
+        data = col.find_one({"_id": self.entry_id})
+        
+        if data:
+            # 3. Buat Embed "REKOR BARU TERCATAT" (Sesuai Gambar 4)
+            emb = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
+            emb.add_field(name="👤 Peserta", value=data['ign'], inline=False)
+            emb.add_field(name="🛡️ Club", value=data.get('club', 'ENDGAME'), inline=True)
+            emb.add_field(name="🆔 ID Game", value=data.get('game_id', '-'), inline=True)
+            emb.add_field(name="⏱️ Waktu", value=f"{data['waktu']}", inline=False)
+            
+            # Tambahkan logo bot/event di bagian bawah (Sesuai Gambar 4)
+            emb.set_image(url="https://your-image-link-here.png") # Ganti dengan link logo OVER-XVI kamu
+            emb.set_footer(text=f"Submitter: {i.user.display_name}")
+
+            # 4. Ubah pesan antrean menjadi tampilan rekor tercatat
+            await i.response.edit_message(content=None, embed=emb, view=None)
+        else:
+            await i.response.send_message("❌ Data tidak ditemukan di database.", ephemeral=True)
 
     @ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
     async def reject(self, i, b):
-        # TAMBAHKAN PENGECEKAN INI
-        if not i.user.guild_permissions.administrator:
-            return await i.response.send_message("❌ Kamu bukan Admin!", ephemeral=True)
-
         col.delete_one({"_id": self.entry_id})
-        await i.response.edit_message(content="❌ Data Driver ditolak dan dihapus.", embed=None, view=None)
+        await i.response.edit_message(content="❌ Data Driver ditolak dan dihapus dari antrean.", embed=None, view=None)
 
 class DeletePlayerModal(ui.Modal):
     def __init__(self, event_name):
