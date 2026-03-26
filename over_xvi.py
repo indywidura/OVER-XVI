@@ -54,26 +54,33 @@ def parse_time(t):
 # ================= UTILS & OCR ENGINE =================
 
 def scan_time(image_bytes):
-    """Fungsi AI Tesseract yang dioptimalkan untuk membaca angka di screenshot game"""
     try:
-        # Import tambahan untuk pemrosesan gambar agar lebih tajam
-        from PIL import Image, ImageOps, ImageEnhance
+        from PIL import Image, ImageOps, ImageEnhance, ImageFilter
         
-        # Buka gambar dan ubah ke skala abu-abu (Greyscale)
-        img = Image.open(io.BytesIO(image_bytes)).convert('L') 
+        # 1. Buka gambar
+        img = Image.open(io.BytesIO(image_bytes))
         
-        # Pre-processing: Meningkatkan kontras agar angka lebih hitam-putih tajam
+        # 2. Ubah ke Greyscale (Hitam Abu-abu)
+        img = img.convert('L') 
+        
+        # 3. PERTAJAM: Naikkan kontras secara ekstrem agar teks putih menonjol
         enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(2.5) # Menaikkan kontras 2.5x
+        img = enhancer.enhance(3.0) 
         
-        # Melakukan scan teks dengan konfigurasi PSM 6 (mengasumsikan blok teks seragam)
-        text = pytesseract.image_to_string(img, config='--psm 6')
+        # 4. BINARIZATION: Mengubah hanya menjadi HITAM dan PUTIH saja
+        # Ini akan menghilangkan gangguan latar belakang merah/awan
+        img = img.point(lambda x: 0 if x < 200 else 255) 
         
-        # Mencari pola MM:SS.ms (contoit: 01:12.188)
+        # 5. SCAN: Gunakan config PSM 7 (menganggap gambar adalah satu baris teks)
+        # Tambahkan whitelist agar AI hanya fokus mencari angka dan simbol waktu
+        custom_config = r'--psm 7 -c tessedit_char_whitelist=0123456789:.'
+        text = pytesseract.image_to_string(img, config=custom_config)
+        
+        # 6. REGEX: Cari pola waktu MM:SS.ms
         match = re.search(r'\d{2}:\d{2}\.\d{3}', text)
         return match.group(0) if match else None
     except Exception as e:
-        print(f"OCR Error: {e}")
+        print(f"DEBUG OCR ERROR: {e}")
         return None
 
 def parse_time(t):
