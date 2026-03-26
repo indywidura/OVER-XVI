@@ -97,12 +97,9 @@ def parse_time(t):
 # ================= MODAL DIALOGS =================
 class SearchPlayerModal(ui.Modal):
     def __init__(self, event_name):
-        super().__init__(title="🔍 Pencarian Database Driver")
+        super().__init__(title="🔍 Pencarian Driver")
         self.event_name = event_name
-        self.target = ui.TextInput(
-            label="IGN atau ID Game", 
-            placeholder="Masukkan Nickname atau ID untuk mencari..."
-        )
+        self.target = ui.TextInput(label="IGN atau ID Game", placeholder="Masukkan Nickname...")
         self.add_item(self.target)
 
     async def on_submit(self, i: discord.Interaction):
@@ -119,21 +116,29 @@ class SearchPlayerModal(ui.Modal):
         
         if found_data:
             d = found_data[0]
+            # Hitung Rank
             rank = col.count_documents({
                 "event": self.event_name, 
                 "approved": True, 
                 "waktu_raw": {"$lt": d['waktu_raw']}
             }) + 1
             
-            emb = discord.Embed(title="🔍 HASIL PENCARIAN", color=0x3498db)
-            emb.add_field(name="👤 Driver", value=f"**{d['ign']}**", inline=False)
+            emb = discord.Embed(title=f"🔍 DATA DRIVER: {d['ign']}", color=0x3498db)
             emb.add_field(name="🛡️ Club", value=f"{d.get('club', '-')}", inline=True)
             emb.add_field(name="🏆 Rank", value=f"**#{rank}**", inline=True)
             emb.add_field(name="⏱️ Waktu", value=f"`{d['waktu']}`", inline=True)
+            emb.add_field(name="📝 Submitter", value=d.get('discord_name', 'Unknown'), inline=False)
+            
+            # TAMPILKAN SCREENSHOT DI SINI
+            if "evidence_url" in d:
+                emb.set_image(url=d["evidence_url"])
+                emb.set_footer(text="Bukti screenshot terlampir di atas")
+            else:
+                emb.set_footer(text="Bukti screenshot tidak ditemukan (Data lama)")
+
             await i.response.send_message(embed=emb, ephemeral=True)
         else:
             await i.response.send_message(f"❌ Player **{self.target.value}** tidak ditemukan.", ephemeral=True)
-
 class SubmitModal(ui.Modal):
     def __init__(self, event_name):
         super().__init__(title=f"📝 Submit: {event_name}")
@@ -148,7 +153,7 @@ class SubmitModal(ui.Modal):
         for item in [self.ign, self.club, self.game_id, self.time_val]: 
             self.add_item(item)
 
-    async def on_submit(self, i: discord.Interaction):
+   async def on_submit(self, i: discord.Interaction):
         user_id = i.user.id
         now = datetime.datetime.now()
         cooldown_seconds = 600  # 10 Menit
@@ -171,7 +176,7 @@ class SubmitModal(ui.Modal):
         if not sec: 
             return await i.response.send_message("❌ Format waktu salah! Gunakan **MM:SS.ms**", ephemeral=True)
         
-        # Set cooldown hanya jika bukan admin
+        # Set cooldown sementara (hanya jika bukan admin)
         if not i.user.guild_permissions.administrator:
             user_cooldowns[user_id] = now
         
@@ -184,26 +189,30 @@ class SubmitModal(ui.Modal):
                 check=lambda m: m.author.id == i.user.id and m.attachments
             )
             
+            # Ambil URL gambar dan bytes
+            attachment_url = msg.attachments[0].url
             img_bytes = await msg.attachments[0].read()
+            
             detected = scan_time(img_bytes)
             is_match = (detected == self.time_val.value)
             
             entry = {
-            "user_id": i.user.id,
-            "discord_name": str(i.user), # Menyimpan Nama#0000 atau Global Name
-            "event": self.event_name,
-            "ign": self.ign.value,
-            "club": self.club.value,
-            "game_id": self.game_id.value,
-            "waktu": self.time_val.value,
-            "waktu_raw": sec,
-            "approved": is_match,
-            "timestamp": datetime.datetime.now()
+                "user_id": i.user.id,
+                "discord_name": str(i.user), # Nama Discord untuk footer Submitter
+                "event": self.event_name,
+                "ign": self.ign.value,
+                "club": self.club.value,
+                "game_id": self.game_id.value,
+                "waktu": self.time_val.value,
+                "waktu_raw": sec,
+                "evidence_url": attachment_url, # Simpan URL untuk pencarian nanti
+                "approved": is_match,
+                "timestamp": now
             }
-             
+            
+            # Update Database (Gunakan upsert agar data tidak duplikat)
             col.update_one({"user_id": i.user.id, "event": self.event_name}, {"$set": entry}, upsert=True)
             doc = col.find_one({"user_id": i.user.id, "event": self.event_name})
-            res = col.update_one({"user_id": i.user.id, "event": self.event_name}, {"$set": entry}, upsert=True)
             
             file_img = discord.File(io.BytesIO(img_bytes), filename="evidence.png")
 
@@ -213,6 +222,8 @@ class SubmitModal(ui.Modal):
                 emb.add_field(name="🛡️ Club", value=f"{self.club.value}", inline=True)
                 emb.add_field(name="⏱️ Waktu", value=f"`{self.time_val.value}`", inline=False)
                 emb.set_image(url="attachment://evidence.png")
+                # Tampilkan Submitter di footer
+                emb.set_footer(text=f"Submitter: {str(i.user)} | Verified by AI")
                 await i.channel.send(embed=emb, file=file_img)
             else:
                 adm_emb = discord.Embed(title="📩 MENUNGGU PERSETUJUAN ADMIN", color=0xf1c40f)
@@ -220,17 +231,23 @@ class SubmitModal(ui.Modal):
                 adm_emb.add_field(name="⌨️ Input", value=f"`{self.time_val.value}`", inline=True)
                 adm_emb.add_field(name="🤖 AI", value=f"`{detected or 'Gagal'}`", inline=True)
                 adm_emb.set_image(url="attachment://evidence.png")
+                # Tampilkan Submitter di footer
+                adm_emb.set_footer(text=f"Submitter: {str(i.user)}")
                 await i.channel.send(content="🔔 **ANTREAN BARU:**", embed=adm_emb, file=file_img, view=ApprovalView(doc['_id']))
             
             await msg.delete()
 
         except asyncio.TimeoutError:
             # Batalkan cooldown jika gagal upload agar user bisa coba lagi
-            if user_id in user_cooldowns: 
+            if not i.user.guild_permissions.administrator and user_id in user_cooldowns: 
                 del user_cooldowns[user_id]
             await i.followup.send("❌ Waktu habis! Kamu tidak mengupload gambar.", ephemeral=True)
         except Exception as e:
+            # Hapus cooldown jika ada error sistem agar tidak merugikan user
+            if not i.user.guild_permissions.administrator and user_id in user_cooldowns: 
+                del user_cooldowns[user_id]
             print(f"Error: {e}")
+            
 # ================= INTERACTIVE VIEWS =================
 class ApprovalView(ui.View):
     def __init__(self, entry_id):
