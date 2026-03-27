@@ -2,10 +2,10 @@ import discord
 from discord.ext import commands
 from discord import ui
 from pymongo import MongoClient
-import datetime, asyncio, re, io, csv, threading, os
+import datetime, asyncio, re, io, csv, threading, os, functools
 from flask import Flask, jsonify
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 
 # ================= CONFIGURATION =================
 TOKEN = os.getenv('TOKEN') 
@@ -18,7 +18,8 @@ bot = commands.Bot(
 )
 
 # Database Setup (Optimized for 1000+ Players)
-db = MongoClient(MONGO_URL)["over_xvi_db"]
+# Ditambahkan maxPoolSize agar koneksi database tidak antre saat input bersamaan
+db = MongoClient(MONGO_URL, maxPoolSize=50)["over_xvi_db"]
 col = db["timeattack"]
 events = db["events"]
 
@@ -33,7 +34,7 @@ def home():
         "bot_status": "Online",
         "total_players": col.count_documents({}),
         "active_events": events.count_documents({}),
-        "engine": "Gemini-Powered OCR System"
+        "engine": "Gemini-Powered OCR System (Async Optimized)"
     })
 
 def run_web():
@@ -53,9 +54,8 @@ def parse_time(t):
         return None
 
 def scan_time(image_bytes):
+    """Fungsi sinkron untuk OCR (Akan dijalankan di thread terpisah)"""
     try:
-        from PIL import Image, ImageOps, ImageEnhance, ImageFilter
-        
         # 1. Buka gambar
         img = Image.open(io.BytesIO(image_bytes))
         
@@ -124,6 +124,20 @@ class SearchPlayerModal(ui.Modal):
         else:
             await i.response.send_message(f"❌ Player **{self.target.value}** tidak ditemukan.", ephemeral=True)
 
+class DeletePlayerModal(ui.Modal):
+    def __init__(self, event_name):
+        super().__init__(title="Hapus Driver")
+        self.event_name = event_name
+        self.target = ui.TextInput(label="IGN Player", placeholder="Nickname...")
+        self.add_item(self.target)
+
+    async def on_submit(self, i: discord.Interaction):
+        result = col.delete_one({"event": self.event_name, "ign": {"$regex": f"^{self.target.value}$", "$options": "i"}})
+        if result.deleted_count > 0:
+            await i.response.send_message(f"✅ **{self.target.value}** berhasil dihapus.", ephemeral=True)
+        else:
+            await i.response.send_message("❌ Player tidak ditemukan.", ephemeral=True)
+
 class SubmitModal(ui.Modal):
     def __init__(self, event_name):
         super().__init__(title=f"📝 Submit: {event_name}")
@@ -137,7 +151,6 @@ class SubmitModal(ui.Modal):
         for item in [self.ign, self.club, self.game_id, self.time_val]: 
             self.add_item(item)
 
-    # PERBAIKAN INDENTASI BARIS 156
     async def on_submit(self, i: discord.Interaction):
         user_id = i.user.id
         now = datetime.datetime.now()
@@ -161,7 +174,7 @@ class SubmitModal(ui.Modal):
         if not i.user.guild_permissions.administrator:
             user_cooldowns[user_id] = now
         
-        await i.response.send_message("📸 Silakan upload screenshot bukti balapan...", ephemeral=True)
+        await i.response.send_message("📸 Silakan upload screenshot bukti balapan (60 detik)...", ephemeral=True)
         
         try:
             msg = await bot.wait_for(
@@ -172,7 +185,13 @@ class SubmitModal(ui.Modal):
             
             attachment_url = msg.attachments[0].url
             img_bytes = await msg.attachments[0].read()
-            detected = scan_time(img_bytes)
+
+            # --- BAGIAN PERBAIKAN ANTI-BENGONG ---
+            loop = asyncio.get_event_loop()
+            # Menjalankan fungsi scan_time (yang berat) di thread terpisah agar bot tidak freeze
+            detected = await loop.run_in_executor(None, scan_time, img_bytes)
+            # -------------------------------------
+
             is_match = (detected == self.time_val.value)
             
             entry = {
@@ -233,7 +252,6 @@ class ApprovalView(ui.View):
         await i.response.send_message("❌ Hanya Admin yang bisa Approve!", ephemeral=True)
         return False
 
-    # PERBAIKAN INDENTASI BARIS 245
     @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i, b):
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True}})
@@ -255,20 +273,6 @@ class ApprovalView(ui.View):
     async def reject(self, i, b):
         col.delete_one({"_id": self.entry_id})
         await i.response.edit_message(content="❌ Data Driver ditolak dan dihapus.", embed=None, view=None)
-
-class DeletePlayerModal(ui.Modal):
-    def __init__(self, event_name):
-        super().__init__(title="Hapus Driver")
-        self.event_name = event_name
-        self.target = ui.TextInput(label="IGN Player", placeholder="Nickname...")
-        self.add_item(self.target)
-
-    async def on_submit(self, i: discord.Interaction):
-        result = col.delete_one({"event": self.event_name, "ign": {"$regex": f"^{self.target.value}$", "$options": "i"}})
-        if result.deleted_count > 0:
-            await i.response.send_message(f"✅ **{self.target.value}** dihapus.", ephemeral=True)
-        else:
-            await i.response.send_message("❌ Tidak ditemukan.", ephemeral=True)
 
 class LeaderboardView(ui.View):
     def __init__(self, event_name, page=0):
@@ -401,6 +405,7 @@ async def create_event(ctx):
 
 @bot.event
 async def on_ready():
+    # Menambahkan view persistent agar tombol tetap berfungsi setelah bot restart
     bot.add_view(MainView("")) 
     print(f">>> OVER-XVI SYSTEM ONLINE <<<")
     threading.Thread(target=run_web, daemon=True).start()
