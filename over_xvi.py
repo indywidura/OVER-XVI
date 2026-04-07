@@ -225,13 +225,32 @@ class ApprovalView(ui.View):
         return False
 
     @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
-    async def approve(self, i, b):
+    async def approve(self, i: discord.Interaction, b: ui.Button):
+        # 1. Update status di database
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True}})
+        
+        # 2. Ambil data lengkap dari database setelah diupdate
         data = col.find_one({"_id": self.entry_id})
+        
         if data:
+            # Ambil nama submitter dari data, dan nama approver dari interaksi tombol
+            submitter_name = data.get('discord_name', 'Unknown')
+            approver_name = str(i.user) # Admin yang klik tombol
+            
             emb = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
-            emb.add_field(name="👤 Peserta", value=f"**{data['ign']}**", inline=False)
+            emb.add_field(name="👤 Peserta", value=f"**{data['ign']}**", inline=True)
+            emb.add_field(name="🛡️ Club", value=f"{data.get('club', '-')}", inline=True)
             emb.add_field(name="⏱️ Waktu", value=f"`{data['waktu']}`", inline=False)
+            
+            # --- TAMBAHKAN BARIS INI ---
+            emb.add_field(name="📥 Submitted by", value=submitter_name, inline=True)
+            emb.add_field(name="⚖️ Approved by", value=approver_name, inline=True)
+            # ---------------------------
+            
+            # Jika ingin tetap menampilkan gambar buktinya
+            if "evidence_url" in data:
+                emb.set_image(url=data["evidence_url"])
+
             await i.response.edit_message(content=None, embed=emb, view=None)
 
     @ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
