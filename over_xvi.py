@@ -224,30 +224,30 @@ class ApprovalView(ui.View):
         await i.response.send_message("❌ Hanya Admin!", ephemeral=True)
         return False
 
-    @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
+   @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i: discord.Interaction, b: ui.Button):
-        # 1. Update status di database
-        col.update_one({"_id": self.entry_id}, {"$set": {"approved": True}})
+        # Ambil nama admin yang menekan tombol
+        approver_name = str(i.user)
         
-        # 2. Ambil data lengkap dari database setelah diupdate
+        # 1. Update status 'approved' DAN simpan siapa yang approve
+        col.update_one(
+            {"_id": self.entry_id}, 
+            {"$set": {"approved": True, "approved_by": approver_name}}
+        )
+        
+        # 2. Ambil data lengkap untuk update embed
         data = col.find_one({"_id": self.entry_id})
         
         if data:
-            # Ambil nama submitter dari data, dan nama approver dari interaksi tombol
             submitter_name = data.get('discord_name', 'Unknown')
-            approver_name = str(i.user) # Admin yang klik tombol
             
             emb = discord.Embed(title="🌟 REKOR BARU TERCATAT", color=0x2ecc71)
             emb.add_field(name="👤 Peserta", value=f"**{data['ign']}**", inline=True)
             emb.add_field(name="🛡️ Club", value=f"{data.get('club', '-')}", inline=True)
             emb.add_field(name="⏱️ Waktu", value=f"`{data['waktu']}`", inline=False)
-            
-            # --- TAMBAHKAN BARIS INI ---
             emb.add_field(name="📥 Submitted by", value=submitter_name, inline=True)
-            emb.add_field(name="⚖️ Approved by", value=approver_name, inline=True)
-            # ---------------------------
+            emb.add_field(name="⚖️ Approved by", value=approver_name, inline=True) # Menampilkan di Discord
             
-            # Jika ingin tetap menampilkan gambar buktinya
             if "evidence_url" in data:
                 emb.set_image(url=data["evidence_url"])
 
@@ -275,9 +275,13 @@ class LeaderboardView(ui.View):
         description = ""
         for idx, d in enumerate(data):
             rank = (self.page * 10) + idx + 1
+            # Menambahkan info approved by di bawah setiap baris leaderboard
+            approver = d.get('approved_by', 'Auto/System')
             description += f"**{rank}.** {d['ign']} [{d.get('club', 'Endgame')}] - `{d['waktu']}`\n"
+            description += f"└ *Approved by: {approver}*\n" # Info tambahan
         
-        emb = discord.Embed(title=f"🏆 LEADERBOARD: {self.event_name.upper()}", description=description or "Belum ada data.", color=0xf1c40f)
+        emb = discord.Embed(title=f"🏆 LEADERBOARD: {self.event_name.upper()}", 
+                            description=description or "Belum ada data.", color=0xf1c40f)
         emb.set_footer(text=f"Halaman {self.page + 1} dari {pages}")
         return emb
 
@@ -319,29 +323,55 @@ class AdminMenuView(ui.View):
         super().__init__(timeout=60)
         self.event_name = event_name
 
-    @ui.button(label="📥 Export CSV", style=discord.ButtonStyle.green)
+    @ui.button(label="📥 Export Excel", style=discord.ButtonStyle.green)
     async def download(self, i: discord.Interaction, b: ui.Button):
-        # Gunakan defer agar tidak timeout (Interaction Failed)
         await i.response.defer(ephemeral=True)
         
-        data = list(col.find({"event": self.event_name}).sort("waktu_raw", 1))
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["RANK", "IGN", "CLUB", "GAME ID", "TIME", "STATUS"])
-        
-        for idx, d in enumerate(data):
-            status = "Approved" if d.get('approved') else "Pending"
-            writer.writerow([idx+1, d['ign'], d.get('club','-'), d.get('game_id','-'), d['waktu'], status])
-        
-        output.seek(0)
-        file_data = io.BytesIO(output.getvalue().encode('utf-8'))
-        
-        # Gunakan followup karena interaksi sudah didefer
-        await i.followup.send(
-            content=f"📊 Rekap CSV {self.event_name}:", 
-            file=discord.File(fp=file_data, filename=f"{self.event_name}.csv"), 
-            ephemeral=True
-        )
+        try:
+            data = list(col.find({"event": self.event_name}).sort("waktu_raw", 1))
+            
+            if not data:
+                return await i.followup.send("❌ Tidak ada data.", ephemeral=True)
+
+            rows = []
+            for idx, d in enumerate(data):
+                status = "Approved" if d.get('approved') else "Pending"
+                rows.append({
+                    "RANK": idx + 1,
+                    "IGN": d.get('ign', '-'),
+                    "CLUB": d.get('club', '-'),
+                    "GAME ID": d.get('game_id', '-'),
+                    "TIME": f"'{d['waktu']}", 
+                    "STATUS": status,
+                    "SUBMITTER": d.get('discord_name', 'Unknown'),
+                    "APPROVED BY": d.get('approved_by', '-') # Kolom baru di Excel
+                })
+
+            df = pd.DataFrame(rows)
+            output = io.BytesIO()
+            
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Leaderboard')
+                
+                # Auto-size kolom
+                worksheet = writer.sheets['Leaderboard']
+                for idx, col_name in enumerate(df.columns):
+                    column_len = max(df[col_name].astype(str).map(len).max(), len(col_name)) + 2
+                    worksheet.column_dimensions[chr(65 + idx)].width = column_len
+
+            output.seek(0)
+            
+            await i.followup.send(
+                content=f"📊 Rekap Excel **{self.event_name}**:", 
+                file=discord.File(fp=output, filename=f"Leaderboard_{self.event_name}.xlsx"), 
+                ephemeral=True
+            )
+        except Exception as e:
+            await i.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+        except Exception as e:
+            print(f"Export Error: {e}")
+            await i.followup.send(f"❌ Terjadi kesalahan saat generate Excel: {e}", ephemeral=True)
 
     @ui.button(label="🚨 Reset Semua Data", style=discord.ButtonStyle.danger)
     async def clear(self, i: discord.Interaction, b: ui.Button):
