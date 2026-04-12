@@ -450,22 +450,37 @@ class MainView(ui.View):
         super().__init__(timeout=None)
         self.event_name = event_name
         self.lang_code = lang_code # Simpan pilihan bahasa
-
-    @ui.button(label="Guide", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
+        
+    @ui.button(label="Guide / Panduan / คู่มือ", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
     async def guide_btn(self, i: discord.Interaction, b: ui.Button):
         emb = discord.Embed(
             title="📖 HOW TO USE / CARA PENGGUNAAN", 
-            description="Follow the steps below:",
+            description="Please follow these steps / Silakan ikuti langkah-langkah berikut:",
             color=0x95a5a6
         )
-        # Label tetap multi-bahasa agar user lain paham
-        emb.add_field(name="🇮🇩 Indonesia", value="1. Klik **Submit Time**\n2. Isi data & Screenshot\n3. Kirim.", inline=False)
-        emb.add_field(name="🇬🇧 English", value="1. Click **Submit Time**\n2. Fill data & Screenshot\n3. Send.", inline=False)
-        emb.add_field(name="🇹🇭 ภาษาไทย", value="1. คลิกที่ **Submit Time**\n2. กรอกข้อมูลและภาพหน้าจอ\n3. ส่ง", inline=False)
-        await i.response.send_message(embed=emb, ephemeral=True)
+        
+        # 🇮🇩 INDONESIA
+        id_msg = "1. Klik **Submit Time**\n2. Isi Nickname, ID, & Waktu (MM:SS.ms)\n3. Kirim foto bukti screenshot\n4. Tunggu verifikasi."
+        # 🇬🇧 ENGLISH
+        en_msg = "1. Click **Submit Time**\n2. Fill IGN, ID, & Time (MM:SS.ms)\n3. Upload screenshot evidence\n4. Wait for verification."
+        # 🇹🇭 THAILAND
+        th_msg = "1. คลิกที่ **Submit Time**\n2. กรอกชื่อในเกม, ID และเวลา (นาที:วินาที.มิลลิวินาที)\n3. อัปโหลดภาพถ่ายหน้าจอหลักฐาน\n4. รอการตรวจสอบ"
+        # 🇵🇭 PHILIPPINES (Tagalog)
+        ph_msg = "1. I-click ang **Submit Time**\n2. Ilagay ang IGN, ID, at Oras (MM:SS.ms)\n3. I-upload ang screenshot\n4. Maghintay para sa beripikasyon."
+        # 🇲🇾 MALAYSIA
+        ms_msg = "1. Klik **Submit Time**\n2. Isi Nickname, ID, & Masa (MM:SS.ms)\n3. Muat naik bukti tangkapan skrin\n4. Tunggu pengesahan."
 
+        emb.add_field(name="🇮🇩 Indonesia", value=id_msg, inline=False)
+        emb.add_field(name="🇬🇧 English", value=en_msg, inline=False)
+        emb.add_field(name="🇹🇭 ภาษาไทย", value=th_msg, inline=False)
+        emb.add_field(name="🇵🇭 Tagalog", value=ph_msg, inline=False)
+        emb.add_field(name="🇲🇾 Bahasa Melayu", value=ms_msg, inline=False)
+        
+        await i.response.send_message(embed=emb, ephemeral=True)
+        
     @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_sub_v5")
     async def submit_btn(self, i: discord.Interaction, b: ui.Button):
+        # ... (Logika cooldown tetap sama seperti sebelumnya)
         user_id = i.user.id
         now = datetime.datetime.now()
         cooldown_seconds = 600
@@ -484,7 +499,8 @@ class MainView(ui.View):
                     lang["cooldown"].format(rem_m, rem_s), 
                     ephemeral=True
                 )
-        # Berikan bahasa saat ini ke Modal
+        
+        # Mengirim modal dengan bahasa yang dipilih
         await i.response.send_modal(SubmitModal(self.event_name, self.lang_code))
 
     @ui.button(label="Leaderboard", style=discord.ButtonStyle.blurple, custom_id="btn_lb_v5")
@@ -492,11 +508,11 @@ class MainView(ui.View):
         v = LeaderboardView(self.event_name)
         d, p = await v.get_stats()
         await i.response.edit_message(embed=v.create_embed(d, p), view=v)
-
+        
     @ui.button(label="Admin Panel", style=discord.ButtonStyle.red, custom_id="btn_adm_v5")
     async def admin_btn(self, i, b):
         if not i.user.guild_permissions.administrator: 
-            return await i.response.send_message("🚫 Admin Only!", ephemeral=True)
+            return await i.response.send_message("🚫 Khusus Admin!", ephemeral=True)
         await i.response.edit_message(embed=discord.Embed(title="🛠️ Admin Control Panel", color=0x2c3e50), view=AdminMenuView(self.event_name))
 
 # ================= COMMANDS =================
