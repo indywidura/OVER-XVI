@@ -111,26 +111,37 @@ def parse_time(t):
         return None
 
 def scan_time(image_bytes):
-    """OCR function dengan Auto-Crop fokus pada area waktu"""
+    """OCR function dengan optimasi Pre-Processing yang lebih kuat"""
     try:
         img = Image.open(io.BytesIO(image_bytes))
         width, height = img.size
         
-        # CROP AREA: Area kiri atas (sekitar 45% lebar, 40% tinggi)
+        # PERBAIKAN CROP: Perlebar sedikit area pencarian (50% lebar, 50% tinggi)
+        # untuk memastikan angka tidak terpotong di berbagai resolusi
         left = 0
         top = 0
-        right = width * 0.45 
-        bottom = height * 0.40
+        right = width * 0.50 
+        bottom = height * 0.50
         img_cropped = img.crop((left, top, right, bottom))
         
-        # PRE-PROCESSING untuk ketajaman
+        # PRE-PROCESSING LANJUTAN
         img_cropped = img_cropped.convert('L') # Grayscale
-        enhancer = ImageEnhance.Contrast(img_cropped)
-        img_cropped = enhancer.enhance(3.0) # Boost contrast
         
-        # OCR Configuration
+        # Optimasi Kontras & Ketajaman
+        img_cropped = ImageEnhance.Contrast(img_cropped).enhance(3.5)
+        img_cropped = ImageEnhance.Sharpness(img_cropped).enhance(2.0)
+        
+        # Opsi tambahan: Jika angka berwarna terang di background gelap, 
+        # Tesseract lebih suka angka hitam di background putih (Invert)
+        img_cropped = ImageOps.invert(img_cropped) 
+        
+        # OCR Configuration - Gunakan mode PSM 6 atau 7
+        # PSM 7: Menganggap gambar adalah satu baris teks
         custom_config = r'--psm 7 -c tessedit_char_whitelist=0123456789:.'
         text = pytesseract.image_to_string(img_cropped, config=custom_config)
+        
+        # Bersihkan karakter aneh yang sering muncul
+        text = text.replace(" ", "").strip()
         
         # Cari pola MM:SS.ms
         match = re.search(r'\d{2}:\d{2}\.\d{3}', text)
@@ -138,7 +149,6 @@ def scan_time(image_bytes):
     except Exception as e:
         print(f"DEBUG OCR ERROR: {e}")
         return None
-
 # ================= MODAL DIALOGS =================
 class SearchPlayerModal(ui.Modal):
     """Modal untuk mencari data spesifik driver"""
