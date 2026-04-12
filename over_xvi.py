@@ -18,13 +18,10 @@ bot = commands.Bot(
     help_command=None
 )
 
-# Setup Database (Data tersimpan di cloud, tidak hilang saat bot update)
+# Setup Database
 db = MongoClient(MONGO_URL, maxPoolSize=50)["over_xvi_db"]
 col = db["timeattack"]
 events = db["events"]
-
-# Dictionary untuk menyimpan waktu cooldown user (bersifat sementara di RAM)
-user_cooldowns = {}
 
 # ================= WEB SERVER (DASHBOARD) =================
 app = Flask(__name__)
@@ -113,21 +110,6 @@ class SearchPlayerModal(ui.Modal):
         else:
             await i.response.send_message(f"❌ Player **{self.target.value}** not found.", ephemeral=True)
 
-class DeletePlayerModal(ui.Modal):
-    """Modal untuk menghapus data player (Khusus Admin)"""
-    def __init__(self, event_name):
-        super().__init__(title="Remove Driver Data")
-        self.event_name = event_name
-        self.target = ui.TextInput(label="Player IGN", placeholder="Enter nickname to remove...")
-        self.add_item(self.target)
-
-    async def on_submit(self, i: discord.Interaction):
-        result = col.delete_one({"event": self.event_name, "ign": {"$regex": f"^{self.target.value}$", "$options": "i"}})
-        if result.deleted_count > 0:
-            await i.response.send_message(f"✅ **{self.target.value}** has been removed.", ephemeral=True)
-        else:
-            await i.response.send_message("❌ Player not found in database.", ephemeral=True)
-
 class SubmitModal(ui.Modal):
     """Modal pendaftaran/submit waktu baru"""
     def __init__(self, event_name):
@@ -141,36 +123,17 @@ class SubmitModal(ui.Modal):
             self.add_item(item)
 
     async def on_submit(self, i: discord.Interaction):
-        user_id = i.user.id
-        now = datetime.datetime.now()
-        cooldown_seconds = 600 # 10 Menit
-
-        # Cek Cooldown (Admin kebal cooldown)
-        if not i.user.guild_permissions.administrator:
-            if user_id in user_cooldowns:
-                elapsed = (now - user_cooldowns[user_id]).total_seconds()
-                if elapsed < cooldown_seconds:
-                    rem_m = int((cooldown_seconds - elapsed) // 60)
-                    rem_s = int((cooldown_seconds - elapsed) % 60)
-                    # Peringatan sedang cooldown
-                    return await i.response.send_message(
-                        f"⏳ **YOU ARE ON COOLDOWN!**\nPlease wait **{rem_m}m {rem_s}s** before submitting again.", ephemeral=True
-                    )
-
         sec = parse_time(self.time_val.value)
         if not sec: 
             return await i.response.send_message("❌ Invalid format! Use **MM:SS.ms** (e.g., 01:05.223)", ephemeral=True)
         
-        # Set Cooldown
-        if not i.user.guild_permissions.administrator:
-            user_cooldowns[user_id] = now
-        
-        await i.response.send_message("📸 Please upload your screenshot evidence now (60s timeout)...", ephemeral=True)
+        await i.response.send_message("📸 Please upload your screenshot evidence (Max 2 minutes)...", ephemeral=True)
         
         try:
+            # Batas waktu tunggu 120 detik (2 menit)
             msg = await bot.wait_for(
                 "message", 
-                timeout=60, 
+                timeout=120, 
                 check=lambda m: m.author.id == i.user.id and m.attachments
             )
             
@@ -181,6 +144,7 @@ class SubmitModal(ui.Modal):
             detected = await loop.run_in_executor(None, scan_time, img_bytes)
 
             is_match = (detected == self.time_val.value)
+            now = datetime.datetime.now()
             
             entry = {
                 "user_id": i.user.id,
@@ -196,7 +160,6 @@ class SubmitModal(ui.Modal):
                 "timestamp": now
             }
             
-            # Update data ke MongoDB (Upsert=True agar data lama tertimpa rekor baru)
             col.update_one({"user_id": i.user.id, "event": self.event_name}, {"$set": entry}, upsert=True)
             doc = col.find_one({"user_id": i.user.id, "event": self.event_name})
             file_img = discord.File(io.BytesIO(img_bytes), filename="evidence.png")
@@ -219,15 +182,12 @@ class SubmitModal(ui.Modal):
             await msg.delete()
 
         except asyncio.TimeoutError:
-            if not i.user.guild_permissions.administrator and user_id in user_cooldowns: 
-                del user_cooldowns[user_id]
-            await i.followup.send("❌ Timeout! No image uploaded.", ephemeral=True)
+            await i.followup.send("❌ Timeout! You did not upload an image within 2 minutes.", ephemeral=True)
         except Exception as e:
             print(f"Error: {e}")
 
 # ================= INTERACTIVE VIEWS =================
 class ApprovalView(ui.View):
-    """View untuk Admin menyetujui atau menolak data"""
     def __init__(self, entry_id):
         super().__init__(timeout=None)
         self.entry_id = entry_id
@@ -258,7 +218,6 @@ class ApprovalView(ui.View):
         await i.response.edit_message(content="❌ Submission rejected and deleted.", embed=None, view=None)
 
 class LeaderboardView(ui.View):
-    """View untuk menampilkan tabel peringkat"""
     def __init__(self, event_name, page=0):
         super().__init__(timeout=60)
         self.event_name = event_name
@@ -275,9 +234,8 @@ class LeaderboardView(ui.View):
         description = ""
         for idx, d in enumerate(data):
             rank = (self.page * 10) + idx + 1
-            approver = d.get('approved_by', 'System')
             description += f"**{rank}.** {d['ign']} [{d.get('club', 'ENDGAME')}] - `{d['waktu']}`\n"
-            description += f"└ *Approved by: {approver}*\n"
+            description += f"└ *Approved by: {d.get('approved_by', 'System')}*\n"
         
         emb = discord.Embed(title=f"🏆 LEADERBOARD: {self.event_name.upper()}", 
                             description=description or "No data found.", color=0xf1c40f)
@@ -311,7 +269,6 @@ class LeaderboardView(ui.View):
         await i.response.edit_message(embed=emb, view=MainView(self.event_name))
 
 class AdminMenuView(ui.View):
-    """View Menu Admin (Export & Reset)"""
     def __init__(self, event_name):
         super().__init__(timeout=60)
         self.event_name = event_name
@@ -322,18 +279,17 @@ class AdminMenuView(ui.View):
         try:
             data = list(col.find({"event": self.event_name}).sort("waktu_raw", 1))
             if not data: return await i.followup.send("❌ No data to export.", ephemeral=True)
-
             rows = []
             for idx, d in enumerate(data):
                 rows.append({
                     "RANK": idx + 1,
                     "IGN": d.get('ign', '-'),
                     "CLUB": d.get('club', '-'),
+                    "GAME ID": d.get('game_id', '-'),
                     "TIME": f"'{d['waktu']}", 
                     "SUBMITTER": d.get('discord_name', '-'),
                     "APPROVED BY": d.get('approved_by', 'System')
                 })
-
             df = pd.DataFrame(rows)
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -354,13 +310,31 @@ class AdminMenuView(ui.View):
         await i.response.edit_message(embed=emb, view=MainView(self.event_name))
 
 class MainView(ui.View):
-    """View Utama yang pertama kali muncul"""
     def __init__(self, event_name):
         super().__init__(timeout=None)
         self.event_name = event_name
 
     @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_sub_v5")
-    async def submit_btn(self, i, b):
+    async def submit_btn(self, i: discord.Interaction, b: ui.Button):
+        user_id = i.user.id
+        now = datetime.datetime.now()
+        cooldown_seconds = 600 # 10 Minutes
+
+        # Cek Cooldown dari Database (Anti-Restart)
+        last_entry = col.find_one({"user_id": user_id, "event": self.event_name})
+        
+        if last_entry and "timestamp" in last_entry and not i.user.guild_permissions.administrator:
+            last_submit = last_entry["timestamp"]
+            elapsed = (now - last_submit).total_seconds()
+
+            if elapsed < cooldown_seconds:
+                rem_m = int((cooldown_seconds - elapsed) // 60)
+                rem_s = int((cooldown_seconds - elapsed) % 60)
+                return await i.response.send_message(
+                    f"⏳ **COOLDOWN ACTIVE!**\nPlease wait **{rem_m}m {rem_s}s** before submitting again.", 
+                    ephemeral=True
+                )
+
         await i.response.send_modal(SubmitModal(self.event_name))
 
     @ui.button(label="Leaderboard", style=discord.ButtonStyle.blurple, custom_id="btn_lb_v5")
@@ -378,7 +352,6 @@ class MainView(ui.View):
 # ================= COMMANDS =================
 @bot.command()
 async def ta(ctx):
-    """Perintah untuk memunculkan menu utama"""
     if not events.find_one({"name": ctx.channel.name}): 
         return await ctx.send("❌ Use `!create_event` first in this channel.")
     emb = discord.Embed(title=f"🏎️ OVER-XVI TIME ATTACK: {ctx.channel.name.upper()}", color=0x3498db)
@@ -387,13 +360,12 @@ async def ta(ctx):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def create_event(ctx):
-    """Perintah untuk mendaftarkan channel ke database"""
     events.update_one({"name": ctx.channel.name}, {"$set": {"name": ctx.channel.name}}, upsert=True)
     await ctx.send(f"✅ Event channel **#{ctx.channel.name}** is now active!")
 
 @bot.event
 async def on_ready():
-    bot.add_view(MainView("")) # Menghidupkan tombol agar tetap bisa ditekan (Persistent)
+    bot.add_view(MainView(""))
     print(f">>> OVER-XVI SYSTEM ONLINE <<<")
     threading.Thread(target=run_web, daemon=True).start()
 
