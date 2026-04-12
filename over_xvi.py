@@ -368,11 +368,31 @@ class MainView(ui.View):
         super().__init__(timeout=None)
         self.event_name = event_name
 
-    @ui.button(label="Panduan / Guide", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
+    @ui.button(label="Panduan / Guide / คู่มือ", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
     async def guide_btn(self, i: discord.Interaction, b: ui.Button):
-        emb = discord.Embed(title="📖 CARA PENGGUNAAN", color=0x95a5a6)
-        msg = "1. Klik **Submit Time**\n2. Isi Nickname, ID, & Waktu (MM:SS.ms)\n3. Upload foto bukti screenshot\n4. Tunggu verifikasi sistem/admin."
-        emb.add_field(name="Panduan Langkah", value=msg, inline=False)
+        emb = discord.Embed(
+            title="📖 HOW TO USE / CARA PENGGUNAAN / วิธีใช้งาน", 
+            description="Please follow these steps to submit your time record:",
+            color=0x95a5a6
+        )
+        
+        # 🇮🇩 INDONESIA
+        id_msg = "1. Klik **Submit Time**\n2. Isi Nickname, ID, & Waktu (MM:SS.ms)\n3. Kirim foto bukti screenshot\n4. Tunggu verifikasi."
+        # 🇬🇧 ENGLISH
+        en_msg = "1. Click **Submit Time**\n2. Fill IGN, ID, & Time (MM:SS.ms)\n3. Upload screenshot evidence\n4. Wait for verification."
+        # 🇹🇭 THAILAND
+        th_msg = "1. คลิกที่ **Submit Time**\n2. กรอกชื่อในเกม, ID และเวลา (นาที:วินาที.มิลลิวินาที)\n3. อัปโหลดภาพถ่ายหน้าจอหลักฐาน\n4. รอการตรวจสอบ"
+        # 🇵🇭 PHILIPPINES (Tagalog)
+        ph_msg = "1. I-click ang **Submit Time**\n2. Ilagay ang IGN, ID, at Oras (MM:SS.ms)\n3. I-upload ang screenshot\n4. Maghintay para sa beripikasyon."
+        # 🇲🇾 MALAYSIA
+        ms_msg = "1. Klik **Submit Time**\n2. Isi Nickname, ID, & Masa (MM:SS.ms)\n3. Muat naik bukti tangkapan skrin\n4. Tunggu pengesahan."
+
+        emb.add_field(name="🇮🇩 Indonesia", value=id_msg, inline=False)
+        emb.add_field(name="🇬🇧 English", value=en_msg, inline=False)
+        emb.add_field(name="🇹🇭 ภาษาไทย", value=th_msg, inline=False)
+        emb.add_field(name="🇵🇭 Tagalog", value=ph_msg, inline=False)
+        emb.add_field(name="🇲🇾 Bahasa Melayu", value=ms_msg, inline=False)
+        
         await i.response.send_message(embed=emb, ephemeral=True)
 
     @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_sub_v5")
