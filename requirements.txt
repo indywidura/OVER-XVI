@@ -1,6 +1,8 @@
 discord.py
-pymongo[srv]
+pymongo
+pandas
+openpyxl
 pytesseract
 Pillow
-flask
+Flask
 dnspython
