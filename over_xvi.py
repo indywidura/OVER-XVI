@@ -8,7 +8,7 @@ import pytesseract
 from PIL import Image, ImageOps, ImageEnhance
 import pandas as pd
 
-# ================= KONFIGURASI =================
+# ================= KONFIGURASI SISTEM =================
 TOKEN = os.getenv('TOKEN') 
 MONGO_URL = os.getenv('MONGO_URL')
 
@@ -18,7 +18,7 @@ bot = commands.Bot(
     help_command=None
 )
 
-# Setup Database
+# Database Setup
 db = MongoClient(MONGO_URL, maxPoolSize=50)["over_xvi_db"]
 col = db["timeattack"]
 events = db["events"]
@@ -41,7 +41,7 @@ def run_web():
 
 # ================= UTILS & OCR ENGINE =================
 def parse_time(t):
-    """Mengubah format MM:SS.ms menjadi float detik untuk sorting"""
+    """Mengonversi MM:SS.ms ke float detik untuk sorting"""
     if not re.match(r'^\d{2}:\d{2}\.\d{3}$', t): 
         return None
     try:
@@ -52,15 +52,28 @@ def parse_time(t):
         return None
 
 def scan_time(image_bytes):
-    """Fungsi OCR untuk membaca teks waktu dari gambar"""
+    """OCR function dengan Auto-Crop fokus pada area waktu"""
     try:
         img = Image.open(io.BytesIO(image_bytes))
-        img = img.convert('L') 
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(3.0) 
-        img = img.point(lambda x: 0 if x < 200 else 255) 
+        width, height = img.size
+        
+        # CROP AREA: Area kiri atas (sekitar 45% lebar, 40% tinggi)
+        left = 0
+        top = 0
+        right = width * 0.45 
+        bottom = height * 0.40
+        img_cropped = img.crop((left, top, right, bottom))
+        
+        # PRE-PROCESSING untuk ketajaman
+        img_cropped = img_cropped.convert('L') # Grayscale
+        enhancer = ImageEnhance.Contrast(img_cropped)
+        img_cropped = enhancer.enhance(3.0) # Boost contrast
+        
+        # OCR Configuration
         custom_config = r'--psm 7 -c tessedit_char_whitelist=0123456789:.'
-        text = pytesseract.image_to_string(img, config=custom_config)
+        text = pytesseract.image_to_string(img_cropped, config=custom_config)
+        
+        # Cari pola MM:SS.ms
         match = re.search(r'\d{2}:\d{2}\.\d{3}', text)
         return match.group(0) if match else None
     except Exception as e:
@@ -69,11 +82,11 @@ def scan_time(image_bytes):
 
 # ================= MODAL DIALOGS =================
 class SearchPlayerModal(ui.Modal):
-    """Modal untuk mencari data player tertentu"""
+    """Modal untuk mencari data spesifik driver"""
     def __init__(self, event_name):
         super().__init__(title="🔍 Driver Search")
         self.event_name = event_name
-        self.target = ui.TextInput(label="IGN or Game ID", placeholder="Enter nickname here...")
+        self.target = ui.TextInput(label="IGN or Game ID", placeholder="Masukkan nickname atau ID...")
         self.add_item(self.target)
 
     async def on_submit(self, i: discord.Interaction):
@@ -100,6 +113,7 @@ class SearchPlayerModal(ui.Modal):
             emb.add_field(name="🛡️ Club", value=f"{d.get('club', '-')}", inline=True)
             emb.add_field(name="🏆 Rank", value=f"**#{rank}**", inline=True)
             emb.add_field(name="⏱️ Time", value=f"`{d['waktu']}`", inline=True)
+            emb.add_field(name="🆔 Game ID", value=f"{d.get('game_id', '-')}", inline=True)
             emb.add_field(name="📝 Submitter", value=d.get('discord_name', 'Unknown'), inline=False)
             emb.add_field(name="⚖️ Approved By", value=d.get('approved_by', 'System'), inline=False)
             
@@ -108,16 +122,16 @@ class SearchPlayerModal(ui.Modal):
             
             await i.response.send_message(embed=emb, ephemeral=True)
         else:
-            await i.response.send_message(f"❌ Player **{self.target.value}** not found.", ephemeral=True)
+            await i.response.send_message(f"❌ Player **{self.target.value}** tidak ditemukan.", ephemeral=True)
 
 class SubmitModal(ui.Modal):
-    """Modal pendaftaran/submit waktu baru"""
+    """Modal untuk submit waktu baru"""
     def __init__(self, event_name):
         super().__init__(title=f"📝 Submit Time: {event_name}")
         self.event_name = event_name
         self.ign = ui.TextInput(label="IGN (Nickname)", min_length=2, max_length=25)
-        self.club = ui.TextInput(label="Club Name", default="ENDGAME", max_length=20)
-        self.game_id = ui.TextInput(label="Game ID", placeholder="Example: 552134")
+        self.club = ui.TextInput(label="Club Name", default="RFF", max_length=20)
+        self.game_id = ui.TextInput(label="Game ID", placeholder="Contoh: 552134")
         self.time_val = ui.TextInput(label="Time (MM:SS.ms)", placeholder="01:12.188")
         for item in [self.ign, self.club, self.game_id, self.time_val]: 
             self.add_item(item)
@@ -125,12 +139,11 @@ class SubmitModal(ui.Modal):
     async def on_submit(self, i: discord.Interaction):
         sec = parse_time(self.time_val.value)
         if not sec: 
-            return await i.response.send_message("❌ Invalid format! Use **MM:SS.ms** (e.g., 01:05.223)", ephemeral=True)
+            return await i.response.send_message("❌ Format Salah! Gunakan **MM:SS.ms** (Contoh: 01:05.223)", ephemeral=True)
         
-        await i.response.send_message("📸 Please upload your screenshot evidence (Max 2 minutes)...", ephemeral=True)
+        await i.response.send_message("📸 Silakan upload screenshot bukti sekarang (Batas 2 menit)...", ephemeral=True)
         
         try:
-            # Batas waktu tunggu 120 detik (2 menit)
             msg = await bot.wait_for(
                 "message", 
                 timeout=120, 
@@ -165,24 +178,36 @@ class SubmitModal(ui.Modal):
             file_img = discord.File(io.BytesIO(img_bytes), filename="evidence.png")
 
             if is_match:
-                emb = discord.Embed(title="✅ AUTO-VERIFIED", color=0x2ecc71)
+                # AUTO-VERIFY SUCCESS
+                emb = discord.Embed(title="🌟 NEW RECORD RECORDED", color=0x2ecc71)
                 emb.add_field(name="👤 Driver", value=f"**{self.ign.value}**", inline=True)
                 emb.add_field(name="🛡️ Club", value=f"{self.club.value}", inline=True)
+                emb.add_field(name="🆔 Game ID", value=f"{self.game_id.value}", inline=True)
                 emb.add_field(name="⏱️ Time", value=f"`{self.time_val.value}`", inline=False)
+                emb.add_field(name="📥 Submitted by", value=f"{i.user.display_name}", inline=True)
+                emb.add_field(name="⚖️ Approved by", value="System (Auto)", inline=True)
                 emb.set_image(url="attachment://evidence.png")
                 await i.channel.send(embed=emb, file=file_img)
             else:
+                # PENDING APPROVAL (OCR MISMATCH)
                 adm_emb = discord.Embed(title="📩 PENDING APPROVAL", color=0xf1c40f)
-                adm_emb.add_field(name="👤 Driver", value=f"{self.ign.value}")
-                adm_emb.add_field(name="⌨️ Input", value=f"`{self.time_val.value}`", inline=True)
-                adm_emb.add_field(name="🤖 AI Scan", value=f"`{detected or 'Failed'}`", inline=True)
+                adm_emb.add_field(name="👤 Driver", value=f"**{self.ign.value}**", inline=True)
+                adm_emb.add_field(name="🛡️ Club", value=f"{self.club.value}", inline=True)
+                adm_emb.add_field(name="🆔 Game ID", value=f"{self.game_id.value}", inline=True)
+                adm_emb.add_field(name="⌨️ User Input", value=f"`{self.time_val.value}`", inline=True)
+                adm_emb.add_field(name="🤖 AI Scan", value=f"`{detected or 'Gagal Membaca'}`", inline=True)
                 adm_emb.set_image(url="attachment://evidence.png")
-                await i.channel.send(content="🔔 **NEW SUBMISSION:**", embed=adm_emb, file=file_img, view=ApprovalView(doc['_id']))
+                await i.channel.send(
+                    content="🔔 **NEW SUBMISSION (MANUAL CHECK REQUIRED):**", 
+                    embed=adm_emb, 
+                    file=file_img, 
+                    view=ApprovalView(doc['_id'])
+                )
             
             await msg.delete()
 
         except asyncio.TimeoutError:
-            await i.followup.send("❌ Timeout! You did not upload an image within 2 minutes.", ephemeral=True)
+            await i.followup.send("❌ Waktu habis! Anda tidak mengupload gambar dalam 2 menit.", ephemeral=True)
         except Exception as e:
             print(f"Error: {e}")
 
@@ -194,28 +219,29 @@ class ApprovalView(ui.View):
         
     async def interaction_check(self, i: discord.Interaction):
         if i.user.guild_permissions.administrator: return True
-        await i.response.send_message("❌ Admin access only!", ephemeral=True)
+        await i.response.send_message("❌ Akses khusus Administrator!", ephemeral=True)
         return False
 
     @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i: discord.Interaction, b: ui.Button):
-        approver = str(i.user)
+        approver = i.user.display_name
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True, "approved_by": approver}})
         data = col.find_one({"_id": self.entry_id})
         
         if data:
-            emb = discord.Embed(title="🌟 RECORD APPROVED", color=0x2ecc71)
+            emb = discord.Embed(title="🌟 NEW RECORD RECORDED", color=0x2ecc71)
             emb.add_field(name="👤 Driver", value=f"**{data['ign']}**", inline=True)
-            emb.add_field(name="⏱️ Time", value=f"`{data['waktu']}`", inline=True)
-            emb.add_field(name="⚖️ Approved By", value=approver, inline=False)
+            emb.add_field(name="🛡️ Club", value=f"{data.get('club', '-')}", inline=True)
+            emb.add_field(name="🆔 Game ID", value=f"{data.get('game_id', '-')}", inline=True)
+            emb.add_field(name="⏱️ Time", value=f"`{data['waktu']}`", inline=False)
+            submitter = data.get('discord_name', 'Unknown').split('#')[0]
+            emb.add_field(name="📥 Submitted by", value=submitter, inline=True)
+            emb.add_field(name="⚖️ Approved by", value=approver, inline=True)
+            
             if "evidence_url" in data:
                 emb.set_image(url=data["evidence_url"])
+                
             await i.response.edit_message(content=None, embed=emb, view=None)
-
-    @ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
-    async def reject(self, i, b):
-        col.delete_one({"_id": self.entry_id})
-        await i.response.edit_message(content="❌ Submission rejected and deleted.", embed=None, view=None)
 
 class LeaderboardView(ui.View):
     def __init__(self, event_name, page=0):
@@ -234,12 +260,12 @@ class LeaderboardView(ui.View):
         description = ""
         for idx, d in enumerate(data):
             rank = (self.page * 10) + idx + 1
-            description += f"**{rank}.** {d['ign']} [{d.get('club', 'ENDGAME')}] - `{d['waktu']}`\n"
+            description += f"**{rank}.** {d['ign']} [{d.get('club', 'RFF')}] - `{d['waktu']}`\n"
             description += f"└ *Approved by: {d.get('approved_by', 'System')}*\n"
         
         emb = discord.Embed(title=f"🏆 LEADERBOARD: {self.event_name.upper()}", 
-                            description=description or "No data found.", color=0xf1c40f)
-        emb.set_footer(text=f"Page {self.page + 1} of {pages}")
+                            description=description or "Tidak ada data tersedia.", color=0xf1c40f)
+        emb.set_footer(text=f"Halaman {self.page + 1} dari {pages}")
         return emb
 
     @ui.button(label="⬅️", style=discord.ButtonStyle.grey)
@@ -278,7 +304,7 @@ class AdminMenuView(ui.View):
         await i.response.defer(ephemeral=True)
         try:
             data = list(col.find({"event": self.event_name}).sort("waktu_raw", 1))
-            if not data: return await i.followup.send("❌ No data to export.", ephemeral=True)
+            if not data: return await i.followup.send("❌ Tidak ada data untuk di-export.", ephemeral=True)
             rows = []
             for idx, d in enumerate(data):
                 rows.append({
@@ -295,32 +321,66 @@ class AdminMenuView(ui.View):
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Data')
             output.seek(0)
-            await i.followup.send(content="📊 Data Exported:", file=discord.File(fp=output, filename=f"Report_{self.event_name}.xlsx"), ephemeral=True)
+            await i.followup.send(content="📊 Data Berhasil di-Export:", file=discord.File(fp=output, filename=f"Report_{self.event_name}.xlsx"), ephemeral=True)
         except Exception as e:
             await i.followup.send(f"❌ Error: {e}", ephemeral=True)
 
     @ui.button(label="🚨 Reset All Data", style=discord.ButtonStyle.danger)
     async def clear(self, i: discord.Interaction, b: ui.Button):
-        col.delete_many({"event": self.event_name})
-        await i.response.send_message("❌ Leaderboard has been cleared!", ephemeral=True)
+        confirm_emb = discord.Embed(
+            title="⚠️ KONFIRMASI RESET",
+            description=f"Apakah Anda yakin ingin menghapus **SEMUA** data leaderboard untuk **{self.event_name}**?\n\nTindakan ini tidak bisa dibatalkan!",
+            color=discord.Color.orange()
+        )
+        await i.response.send_message(embed=confirm_emb, view=ConfirmResetView(self.event_name, i.user.name), ephemeral=True)
 
-    @ui.button(label="⬅️ Back", style=discord.ButtonStyle.blurple)
+    @ui.button(label="⬅️ Kembali", style=discord.ButtonStyle.blurple)
     async def back(self, i: discord.Interaction, b: ui.Button):
         emb = discord.Embed(title=f"🏎️ EVENT: {self.event_name.upper()}", color=0x3498db)
-        await i.response.edit_message(embed=emb, view=MainView(self.event_name))
+        await i.response.edit_message(embed=emb, view=MainView(self.event_name))    
+        
+class ConfirmResetView(ui.View):
+    def __init__(self, event_name, admin_name):
+        super().__init__(timeout=30)
+        self.event_name = event_name
+        self.admin_name = admin_name
+
+    @ui.button(label="YA, HAPUS SEMUA", style=discord.ButtonStyle.danger)
+    async def confirm(self, i: discord.Interaction, b: ui.Button):
+        # Hanya menghapus data pada event yang bersangkutan
+        result = col.delete_many({"event": self.event_name})
+        emb = discord.Embed(
+            title="🚨 LEADERBOARD RESET", 
+            description=f"Semua rekaman untuk event **{self.event_name.upper()}** telah dibersihkan.",
+            color=discord.Color.red(),
+            timestamp=datetime.datetime.now()
+        )
+        emb.add_field(name="Total Terhapus", value=f"{result.deleted_count} rekaman", inline=True)
+        emb.add_field(name="Eksekutor", value=f"🛡️ {self.admin_name}", inline=True)
+        await i.response.edit_message(content=None, embed=emb, view=None)
+
+    @ui.button(label="BATAL", style=discord.ButtonStyle.grey)
+    async def cancel(self, i: discord.Interaction, b: ui.Button):
+        await i.response.edit_message(content="✅ Operasi reset dibatalkan.", embed=None, view=None)
 
 class MainView(ui.View):
     def __init__(self, event_name):
         super().__init__(timeout=None)
         self.event_name = event_name
 
+    @ui.button(label="Panduan / Guide", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
+    async def guide_btn(self, i: discord.Interaction, b: ui.Button):
+        emb = discord.Embed(title="📖 CARA PENGGUNAAN", color=0x95a5a6)
+        msg = "1. Klik **Submit Time**\n2. Isi Nickname, ID, & Waktu (MM:SS.ms)\n3. Upload foto bukti screenshot\n4. Tunggu verifikasi sistem/admin."
+        emb.add_field(name="Panduan Langkah", value=msg, inline=False)
+        await i.response.send_message(embed=emb, ephemeral=True)
+
     @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_sub_v5")
     async def submit_btn(self, i: discord.Interaction, b: ui.Button):
         user_id = i.user.id
         now = datetime.datetime.now()
-        cooldown_seconds = 600 # 10 Minutes
+        cooldown_seconds = 600 # 10 Menit
 
-        # Cek Cooldown dari Database (Anti-Restart)
         last_entry = col.find_one({"user_id": user_id, "event": self.event_name})
         
         if last_entry and "timestamp" in last_entry and not i.user.guild_permissions.administrator:
@@ -331,7 +391,7 @@ class MainView(ui.View):
                 rem_m = int((cooldown_seconds - elapsed) // 60)
                 rem_s = int((cooldown_seconds - elapsed) % 60)
                 return await i.response.send_message(
-                    f"⏳ **COOLDOWN ACTIVE!**\nPlease wait **{rem_m}m {rem_s}s** before submitting again.", 
+                    f"⏳ **COOLDOWN AKTIF!**\nSilakan tunggu **{rem_m}m {rem_s}s** sebelum submit lagi.", 
                     ephemeral=True
                 )
 
@@ -343,17 +403,17 @@ class MainView(ui.View):
         d, p = await v.get_stats()
         await i.response.edit_message(embed=v.create_embed(d, p), view=v)
 
-    @ui.button(label="Admin Panel", style=discord.ButtonStyle.grey, custom_id="btn_adm_v5")
+    @ui.button(label="Admin Panel", style=discord.ButtonStyle.red, custom_id="btn_adm_v5")
     async def admin_btn(self, i, b):
         if not i.user.guild_permissions.administrator: 
-            return await i.response.send_message("🚫 Admin only!", ephemeral=True)
-        await i.response.edit_message(embed=discord.Embed(title="🛠️ Admin Control", color=0x2c3e50), view=AdminMenuView(self.event_name))
+            return await i.response.send_message("🚫 Khusus Admin!", ephemeral=True)
+        await i.response.edit_message(embed=discord.Embed(title="🛠️ Admin Control Panel", color=0x2c3e50), view=AdminMenuView(self.event_name))
 
 # ================= COMMANDS =================
 @bot.command()
 async def ta(ctx):
     if not events.find_one({"name": ctx.channel.name}): 
-        return await ctx.send("❌ Use `!create_event` first in this channel.")
+        return await ctx.send("❌ Event tidak ditemukan. Gunakan `!create_event` di channel ini terlebih dahulu.")
     emb = discord.Embed(title=f"🏎️ OVER-XVI TIME ATTACK: {ctx.channel.name.upper()}", color=0x3498db)
     await ctx.send(embed=emb, view=MainView(ctx.channel.name))
 
@@ -361,7 +421,7 @@ async def ta(ctx):
 @commands.has_permissions(administrator=True)
 async def create_event(ctx):
     events.update_one({"name": ctx.channel.name}, {"$set": {"name": ctx.channel.name}}, upsert=True)
-    await ctx.send(f"✅ Event channel **#{ctx.channel.name}** is now active!")
+    await ctx.send(f"✅ Channel event **#{ctx.channel.name}** sekarang aktif!")
 
 @bot.event
 async def on_ready():
