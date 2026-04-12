@@ -23,6 +23,65 @@ db = MongoClient(MONGO_URL, maxPoolSize=50)["over_xvi_db"]
 col = db["timeattack"]
 events = db["events"]
 
+# ================= MULTI-LANGUAGE DICTIONARY =================
+TRANSLATIONS = {
+    "id": {
+        "modal_title": "Submit Waktu",
+        "ign": "IGN (Nickname)",
+        "club": "Nama Club",
+        "id_game": "Game ID",
+        "time": "Waktu (MM:SS.ms)",
+        "invalid_time": "❌ Format Salah! Gunakan **MM:SS.ms**",
+        "upload_msg": "📸 Silakan upload screenshot bukti sekarang...",
+        "timeout": "❌ Waktu habis! Anda tidak mengupload gambar.",
+        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSilakan tunggu **{}m {}s**."
+    },
+    "en": {
+        "modal_title": "Submit Time",
+        "ign": "IGN (Nickname)",
+        "club": "Club Name",
+        "id_game": "Game ID",
+        "time": "Time (MM:SS.ms)",
+        "invalid_time": "❌ Invalid Format! Use **MM:SS.ms**",
+        "upload_msg": "📸 Please upload screenshot evidence now...",
+        "timeout": "❌ Timeout! No image uploaded.",
+        "cooldown": "⏳ **COOLDOWN ACTIVE!**\nPlease wait **{}m {}s**."
+    },
+    "th": {
+        "modal_title": "ส่งเวลา",
+        "ign": "ชื่อในเกม (IGN)",
+        "club": "ชื่อคลับ",
+        "id_game": "ไอดีเกม",
+        "time": "เวลา (นาที:วินาที.มิลลิวินาที)",
+        "invalid_time": "❌ รูปแบบไม่ถูกต้อง! ใช้ **MM:SS.ms**",
+        "upload_msg": "📸 กรุณาอัปโหลดภาพหน้าจอหลักฐานตอนนี้...",
+        "timeout": "❌ หมดเวลา! ไม่มีการอัปโหลดภาพ",
+        "cooldown": "⏳ **คูลดาวน์ทำงาน!**\nกรุณารอ **{}น {}ว**."
+    },
+    "ph": {
+        "modal_title": "I-submit ang Oras",
+        "ign": "IGN (Nickname)",
+        "club": "Pangalan ng Club",
+        "id_game": "Game ID",
+        "time": "Oras (MM:SS.ms)",
+        "invalid_time": "❌ Maling Format! Gamitin ang **MM:SS.ms**",
+        "upload_msg": "📸 Mangyaring i-upload ang screenshot ngayon...",
+        "timeout": "❌ Ubos na ang oras! Walang na-upload na larawan.",
+        "cooldown": "⏳ **COOLDOWN AKTIBO!**\nMaghintay ng **{}m {}s**."
+    },
+    "ms": {
+        "modal_title": "Hantar Masa",
+        "ign": "IGN (Nickname)",
+        "club": "Nama Kelab",
+        "id_game": "ID Permainan",
+        "time": "Masa (MM:SS.ms)",
+        "invalid_time": "❌ Format Salah! Gunakan **MM:SS.ms**",
+        "upload_msg": "📸 Sila muat naik tangkapan skrin sekarang...",
+        "timeout": "❌ Masa tamat! Tiada gambar dimuat naik.",
+        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSila tunggu **{}m {}s**."
+    }
+}
+
 # ================= WEB SERVER (DASHBOARD) =================
 app = Flask(__name__)
 
@@ -125,23 +184,26 @@ class SearchPlayerModal(ui.Modal):
             await i.response.send_message(f"❌ Player **{self.target.value}** tidak ditemukan.", ephemeral=True)
 
 class SubmitModal(ui.Modal):
-    """Modal untuk submit waktu baru"""
-    def __init__(self, event_name):
-        super().__init__(title=f"📝 Submit Time: {event_name}")
+    """Modal untuk submit waktu baru dengan dukungan multi-bahasa"""
+    def __init__(self, event_name, lang_code="en"):
+        self.lang = TRANSLATIONS.get(lang_code, TRANSLATIONS["en"])
+        super().__init__(title=f"{self.lang['modal_title']}: {event_name}")
         self.event_name = event_name
-        self.ign = ui.TextInput(label="IGN (Nickname)", min_length=2, max_length=25)
-        self.club = ui.TextInput(label="Club Name", default="RFF", max_length=20)
-        self.game_id = ui.TextInput(label="Game ID", placeholder="Contoh: 552134")
-        self.time_val = ui.TextInput(label="Time (MM:SS.ms)", placeholder="01:12.188")
+        
+        self.ign = ui.TextInput(label=self.lang["ign"], min_length=2, max_length=25)
+        self.club = ui.TextInput(label=self.lang["club"], placeholder="RFF", max_length=20, required=False)
+        self.game_id = ui.TextInput(label=self.lang["id_game"], placeholder="552134")
+        self.time_val = ui.TextInput(label=self.lang["time"], placeholder="01:12.188")
+        
         for item in [self.ign, self.club, self.game_id, self.time_val]: 
             self.add_item(item)
 
     async def on_submit(self, i: discord.Interaction):
         sec = parse_time(self.time_val.value)
         if not sec: 
-            return await i.response.send_message("❌ Format Salah! Gunakan **MM:SS.ms** (Contoh: 01:05.223)", ephemeral=True)
+            return await i.response.send_message(self.lang["invalid_time"], ephemeral=True)
         
-        await i.response.send_message("📸 Silakan upload screenshot bukti sekarang (Batas 2 menit)...", ephemeral=True)
+        await i.response.send_message(self.lang["upload_msg"], ephemeral=True)
         
         try:
             msg = await bot.wait_for(
@@ -178,7 +240,6 @@ class SubmitModal(ui.Modal):
             file_img = discord.File(io.BytesIO(img_bytes), filename="evidence.png")
 
             if is_match:
-                # AUTO-VERIFY SUCCESS
                 emb = discord.Embed(title="🌟 NEW RECORD RECORDED", color=0x2ecc71)
                 emb.add_field(name="👤 Driver", value=f"**{self.ign.value}**", inline=True)
                 emb.add_field(name="🛡️ Club", value=f"{self.club.value}", inline=True)
@@ -189,7 +250,6 @@ class SubmitModal(ui.Modal):
                 emb.set_image(url="attachment://evidence.png")
                 await i.channel.send(embed=emb, file=file_img)
             else:
-                # PENDING APPROVAL (OCR MISMATCH)
                 adm_emb = discord.Embed(title="📩 PENDING APPROVAL", color=0xf1c40f)
                 adm_emb.add_field(name="👤 Driver", value=f"**{self.ign.value}**", inline=True)
                 adm_emb.add_field(name="🛡️ Club", value=f"{self.club.value}", inline=True)
@@ -207,7 +267,7 @@ class SubmitModal(ui.Modal):
             await msg.delete()
 
         except asyncio.TimeoutError:
-            await i.followup.send("❌ Waktu habis! Anda tidak mengupload gambar dalam 2 menit.", ephemeral=True)
+            await i.followup.send(self.lang["timeout"], ephemeral=True)
         except Exception as e:
             print(f"Error: {e}")
 
@@ -347,7 +407,6 @@ class ConfirmResetView(ui.View):
 
     @ui.button(label="YA, HAPUS SEMUA", style=discord.ButtonStyle.danger)
     async def confirm(self, i: discord.Interaction, b: ui.Button):
-        # Hanya menghapus data pada event yang bersangkutan
         result = col.delete_many({"event": self.event_name})
         emb = discord.Embed(
             title="🚨 LEADERBOARD RESET", 
@@ -363,43 +422,54 @@ class ConfirmResetView(ui.View):
     async def cancel(self, i: discord.Interaction, b: ui.Button):
         await i.response.edit_message(content="✅ Operasi reset dibatalkan.", embed=None, view=None)
 
-class MainView(ui.View):
+# ================= NEW: LANGUAGE SELECT VIEW =================
+class LanguageSelectView(ui.View):
+    """View awal untuk memilih bahasa sebelum masuk ke menu utama"""
     def __init__(self, event_name):
-        super().__init__(timeout=None)
+        super().__init__(timeout=60)
         self.event_name = event_name
 
-    @ui.button(label="Panduan / Guide / คู่มือ", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
+    @ui.select(
+        placeholder="Choose your language / Pilih bahasa anda...",
+        options=[
+            discord.SelectOption(label="Indonesia", value="id", emoji="🇮🇩"),
+            discord.SelectOption(label="English", value="en", emoji="🇬🇧"),
+            discord.SelectOption(label="Thailand", value="th", emoji="🇹🇭"),
+            discord.SelectOption(label="Philippines", value="ph", emoji="🇵🇭"),
+            discord.SelectOption(label="Malaysia", value="ms", emoji="🇲🇾"),
+        ]
+    )
+    async def select_lang(self, i: discord.Interaction, select: ui.Select):
+        lang_code = select.values[0]
+        emb = discord.Embed(title=f"🏎️ EVENT: {self.event_name.upper()}", color=0x3498db)
+        # Teruskan kode bahasa ke MainView
+        await i.response.edit_message(embed=emb, view=MainView(self.event_name, lang_code))
+
+class MainView(ui.View):
+    def __init__(self, event_name, lang_code="en"):
+        super().__init__(timeout=None)
+        self.event_name = event_name
+        self.lang_code = lang_code # Simpan pilihan bahasa
+
+    @ui.button(label="Guide", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
     async def guide_btn(self, i: discord.Interaction, b: ui.Button):
         emb = discord.Embed(
-            title="📖 HOW TO USE / CARA PENGGUNAAN / วิธีใช้งาน", 
-            description="Please follow these steps to submit your time record:",
+            title="📖 HOW TO USE / CARA PENGGUNAAN", 
+            description="Follow the steps below:",
             color=0x95a5a6
         )
-        
-        # 🇮🇩 INDONESIA
-        id_msg = "1. Klik **Submit Time**\n2. Isi Nickname, ID, & Waktu (MM:SS.ms)\n3. Kirim foto bukti screenshot\n4. Tunggu verifikasi."
-        # 🇬🇧 ENGLISH
-        en_msg = "1. Click **Submit Time**\n2. Fill IGN, ID, & Time (MM:SS.ms)\n3. Upload screenshot evidence\n4. Wait for verification."
-        # 🇹🇭 THAILAND
-        th_msg = "1. คลิกที่ **Submit Time**\n2. กรอกชื่อในเกม, ID และเวลา (นาที:วินาที.มิลลิวินาที)\n3. อัปโหลดภาพถ่ายหน้าจอหลักฐาน\n4. รอการตรวจสอบ"
-        # 🇵🇭 PHILIPPINES (Tagalog)
-        ph_msg = "1. I-click ang **Submit Time**\n2. Ilagay ang IGN, ID, at Oras (MM:SS.ms)\n3. I-upload ang screenshot\n4. Maghintay para sa beripikasyon."
-        # 🇲🇾 MALAYSIA
-        ms_msg = "1. Klik **Submit Time**\n2. Isi Nickname, ID, & Masa (MM:SS.ms)\n3. Muat naik bukti tangkapan skrin\n4. Tunggu pengesahan."
-
-        emb.add_field(name="🇮🇩 Indonesia", value=id_msg, inline=False)
-        emb.add_field(name="🇬🇧 English", value=en_msg, inline=False)
-        emb.add_field(name="🇹🇭 ภาษาไทย", value=th_msg, inline=False)
-        emb.add_field(name="🇵🇭 Tagalog", value=ph_msg, inline=False)
-        emb.add_field(name="🇲🇾 Bahasa Melayu", value=ms_msg, inline=False)
-        
+        # Label tetap multi-bahasa agar user lain paham
+        emb.add_field(name="🇮🇩 Indonesia", value="1. Klik **Submit Time**\n2. Isi data & Screenshot\n3. Kirim.", inline=False)
+        emb.add_field(name="🇬🇧 English", value="1. Click **Submit Time**\n2. Fill data & Screenshot\n3. Send.", inline=False)
+        emb.add_field(name="🇹🇭 ภาษาไทย", value="1. คลิกที่ **Submit Time**\n2. กรอกข้อมูลและภาพหน้าจอ\n3. ส่ง", inline=False)
         await i.response.send_message(embed=emb, ephemeral=True)
 
     @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_sub_v5")
     async def submit_btn(self, i: discord.Interaction, b: ui.Button):
         user_id = i.user.id
         now = datetime.datetime.now()
-        cooldown_seconds = 600 # 10 Menit
+        cooldown_seconds = 600
+        lang = TRANSLATIONS.get(self.lang_code, TRANSLATIONS["en"])
 
         last_entry = col.find_one({"user_id": user_id, "event": self.event_name})
         
@@ -411,11 +481,11 @@ class MainView(ui.View):
                 rem_m = int((cooldown_seconds - elapsed) // 60)
                 rem_s = int((cooldown_seconds - elapsed) % 60)
                 return await i.response.send_message(
-                    f"⏳ **COOLDOWN AKTIF!**\nSilakan tunggu **{rem_m}m {rem_s}s** sebelum submit lagi.", 
+                    lang["cooldown"].format(rem_m, rem_s), 
                     ephemeral=True
                 )
-
-        await i.response.send_modal(SubmitModal(self.event_name))
+        # Berikan bahasa saat ini ke Modal
+        await i.response.send_modal(SubmitModal(self.event_name, self.lang_code))
 
     @ui.button(label="Leaderboard", style=discord.ButtonStyle.blurple, custom_id="btn_lb_v5")
     async def lb_btn(self, i, b):
@@ -426,16 +496,22 @@ class MainView(ui.View):
     @ui.button(label="Admin Panel", style=discord.ButtonStyle.red, custom_id="btn_adm_v5")
     async def admin_btn(self, i, b):
         if not i.user.guild_permissions.administrator: 
-            return await i.response.send_message("🚫 Khusus Admin!", ephemeral=True)
+            return await i.response.send_message("🚫 Admin Only!", ephemeral=True)
         await i.response.edit_message(embed=discord.Embed(title="🛠️ Admin Control Panel", color=0x2c3e50), view=AdminMenuView(self.event_name))
 
 # ================= COMMANDS =================
 @bot.command()
 async def ta(ctx):
     if not events.find_one({"name": ctx.channel.name}): 
-        return await ctx.send("❌ Event tidak ditemukan. Gunakan `!create_event` di channel ini terlebih dahulu.")
-    emb = discord.Embed(title=f"🏎️ OVER-XVI TIME ATTACK: {ctx.channel.name.upper()}", color=0x3498db)
-    await ctx.send(embed=emb, view=MainView(ctx.channel.name))
+        return await ctx.send("❌ Event tidak ditemukan di channel ini.")
+    
+    emb = discord.Embed(
+        title="🌐 SELECT LANGUAGE", 
+        description="Please select your language first to continue.\nSilakan pilih bahasa terlebih dahulu.",
+        color=0x3498db
+    )
+    # Mulai dengan pilihan bahasa
+    await ctx.send(embed=emb, view=LanguageSelectView(ctx.channel.name))
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -445,6 +521,7 @@ async def create_event(ctx):
 
 @bot.event
 async def on_ready():
+    # Persistent views (Tanpa ID bahasa karena default)
     bot.add_view(MainView(""))
     print(f">>> OVER-XVI SYSTEM ONLINE <<<")
     threading.Thread(target=run_web, daemon=True).start()
