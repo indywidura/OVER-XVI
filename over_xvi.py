@@ -34,7 +34,11 @@ TRANSLATIONS = {
         "invalid_time": "❌ Format Salah! Gunakan **MM:SS.ms**",
         "upload_msg": "📸 Silakan upload screenshot bukti sekarang...",
         "timeout": "❌ Waktu habis! Anda tidak mengupload gambar.",
-        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSilakan tunggu **{}m {}s**."
+        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSilakan tunggu **{}m {}s**.",
+        "pb_title": "⏱️ Rekor Pribadi Anda",
+        "pb_not_found": "❌ Anda belum memiliki rekor yang disetujui di event ini.",
+        "pb_rank": "Peringkat",
+        "pb_footer": "Terakhir diperbarui: {}"
     },
     "en": {
         "modal_title": "Submit Time",
@@ -45,7 +49,11 @@ TRANSLATIONS = {
         "invalid_time": "❌ Invalid Format! Use **MM:SS.ms**",
         "upload_msg": "📸 Please upload screenshot evidence now...",
         "timeout": "❌ Timeout! No image uploaded.",
-        "cooldown": "⏳ **COOLDOWN ACTIVE!**\nPlease wait **{}m {}s**."
+        "cooldown": "⏳ **COOLDOWN ACTIVE!**\nPlease wait **{}m {}s**.",
+        "pb_title": "⏱️ Your Personal Best",
+        "pb_not_found": "❌ You don't have an approved record in this event yet.",
+        "pb_rank": "Rank",
+        "pb_footer": "Last updated: {}"
     },
     "th": {
         "modal_title": "ส่งเวลา",
@@ -56,7 +64,11 @@ TRANSLATIONS = {
         "invalid_time": "❌ รูปแบบไม่ถูกต้อง! ใช้ **MM:SS.ms**",
         "upload_msg": "📸 กรุณาอัปโหลดภาพหน้าจอหลักฐานตอนนี้...",
         "timeout": "❌ หมดเวลา! ไม่มีการอัปโหลดภาพ",
-        "cooldown": "⏳ **คูลดาวน์ทำงาน!**\nกรุณารอ **{}น {}ว**."
+        "cooldown": "⏳ **คูลดาวน์ทำงาน!**\nกรุณารอ **{}น {}ว**.",
+        "pb_title": "⏱️ สถิติส่วนตัวของคุณ",
+        "pb_not_found": "❌ คุณยังไม่มีบันทึกที่ได้รับการอนุมัติในกิจกรรมนี้",
+        "pb_rank": "อันดับ",
+        "pb_footer": "อัปเดตล่าสุด: {}"
     },
     "ph": {
         "modal_title": "I-submit ang Oras",
@@ -67,7 +79,11 @@ TRANSLATIONS = {
         "invalid_time": "❌ Maling Format! Gamitin ang **MM:SS.ms**",
         "upload_msg": "📸 Mangyaring i-upload ang screenshot ngayon...",
         "timeout": "❌ Ubos na ang oras! Walang na-upload na larawan.",
-        "cooldown": "⏳ **COOLDOWN AKTIBO!**\nMaghintay ng **{}m {}s**."
+        "cooldown": "⏳ **COOLDOWN AKTIBO!**\nMaghintay ng **{}m {}s**.",
+        "pb_title": "⏱️ Iyong Personal Best",
+        "pb_not_found": "❌ Wala ka pang aprubadong record sa event na ito.",
+        "pb_rank": "Ranggo",
+        "pb_footer": "Huling na-update: {}"
     },
     "ms": {
         "modal_title": "Hantar Masa",
@@ -78,7 +94,11 @@ TRANSLATIONS = {
         "invalid_time": "❌ Format Salah! Gunakan **MM:SS.ms**",
         "upload_msg": "📸 Sila muat naik tangkapan skrin sekarang...",
         "timeout": "❌ Masa tamat! Tiada gambar dimuat naik.",
-        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSila tunggu **{}m {}s**."
+        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSila tunggu **{}m {}s**.",
+        "pb_title": "⏱️ Rekod Peribadi Anda",
+        "pb_not_found": "❌ Anda belum mempunyai rekod yang diluluskan dalam acara ini.",
+        "pb_rank": "Kedudukan",
+        "pb_footer": "Kemaskini terakhir: {}"
     }
 }
 
@@ -149,6 +169,49 @@ def scan_time(image_bytes):
     except Exception as e:
         print(f"DEBUG OCR ERROR: {e}")
         return None
+        
+# Taruh di bawah fungsi scan_time(image_bytes)
+async def update_live_leaderboard(event_name):
+    """Mencari pesan leaderboard di channel event dan mengupdate-nya"""
+    channel = discord.utils.get(bot.get_all_channels(), name=event_name)
+    if not channel: return
+
+    data = list(col.find({"event": event_name, "approved": True}).sort("waktu_raw", 1).limit(10))
+    
+    description = ""
+    for idx, d in enumerate(data):
+        medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f"**{idx+1}.**"
+        description += f"{medal} {d['ign']} [{d.get('club', 'RFF')}] - `{d['waktu']}`\n"
+
+    emb = discord.Embed(
+        title=f"🏆 LIVE LEADERBOARD: {event_name.upper()}",
+        description=description or "Belum ada rekor tercatat.",
+        color=0xf1c40f,
+        timestamp=datetime.datetime.now()
+    )
+    emb.set_footer(text="Terupdate otomatis setiap ada persetujuan baru")
+
+    async for message in channel.history(limit=50):
+        if message.author == bot.user and message.embeds:
+            if "LIVE LEADERBOARD" in message.embeds[0].title:
+                await message.edit(embed=emb)
+                return
+
+async def send_audit_log(event_name, action, admin_name, details, color=0x34495e):
+    # Cari info event di database
+    event_info = events.find_one({"name": event_name})
+    if not event_info or "log_channel_id" not in event_info:
+        return
+
+    channel = bot.get_channel(event_info["log_channel_id"])
+    if not channel: return
+    
+    emb = discord.Embed(title=f"🛡️ AUDIT LOG: {event_name.upper()}", color=color, timestamp=datetime.datetime.now())
+    emb.add_field(name="Tindakan", value=f"**{action}**", inline=False)
+    emb.add_field(name="Eksekutor", value=f"👤 {admin_name}", inline=True)
+    emb.add_field(name="Detail", value=details, inline=False)
+    
+    await channel.send(embed=emb)
 # ================= MODAL DIALOGS =================
 class SearchPlayerModal(ui.Modal):
     """Modal untuk mencari data spesifik driver"""
@@ -214,6 +277,12 @@ class SubmitModal(ui.Modal):
             return await i.response.send_message(self.lang["invalid_time"], ephemeral=True)
         
         await i.response.send_message(self.lang["upload_msg"], ephemeral=True)
+
+        # Di dalam SubmitModal.on_submit:
+        if not detected and not i.user.guild_permissions.administrator:
+        # Jika bot benar-benar gagal baca dan user bukan admin, 
+         # beri peringatan lebih keras sebelum memasukkan ke DB.
+    pass
         
         try:
             msg = await bot.wait_for(
@@ -295,23 +364,78 @@ class ApprovalView(ui.View):
     @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i: discord.Interaction, b: ui.Button):
         approver = i.user.display_name
+        
+        # 1. Cari data lama untuk cek Personal Best (PB)
+        old_data = col.find_one({"_id": self.entry_id})
+        if not old_data:
+            return await i.response.send_message("Data tidak ditemukan!", ephemeral=True)
+
+        # Cari rekor terbaik sebelumnya (yang sudah approved)
+        pb_data = col.find_one({
+            "user_id": old_data["user_id"], 
+            "event": old_data["event"], 
+            "approved": True,
+            "_id": {"$ne": self.entry_id} # Jangan hitung data yang sedang diproses
+        })
+
+        diff_msg = ""
+        if pb_data:
+            diff = pb_data['waktu_raw'] - old_data['waktu_raw']
+            if diff > 0:
+                diff_msg = f"\n🔥 **NEW PERSONAL BEST!** Improved by `-{diff:.3f}s`"
+            elif diff < 0:
+                diff_msg = f"\n⚠️ *Note: Time is slower than current PB (+{abs(diff):.3f}s)*"
+
+        # 2. Update status Approval
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True, "approved_by": approver}})
+        
+        # 3. Kirim Embed Sukses
+        emb = discord.Embed(
+            title="🌟 NEW RECORD RECORDED", 
+            description=f"{diff_msg}", 
+            color=0x2ecc71
+        )
+        emb.add_field(name="👤 Driver", value=f"**{old_data['ign']}**", inline=True)
+        emb.add_field(name="⏱️ Time", value=f"`{old_data['waktu']}`", inline=True)
+        emb.add_field(name="⚖️ Approved by", value=approver, inline=True)
+        
+        if "evidence_url" in old_data:
+            emb.set_image(url=old_data["evidence_url"])
+            
+        await i.response.edit_message(content=None, embed=emb, view=None)
+        
+        # TRIGGER AUTO-UPDATE LEADERBOARD
+        await update_live_leaderboard(old_data["event"])
+
+        await send_audit_log(
+    event_name=old_data["event"],
+    action="MANUAL APPROVAL",
+    admin_name=i.user.display_name,
+    details=f"Pembalap: **{old_data['ign']}**\nWaktu: `{old_data['waktu']}`",
+    color=0x2ecc71
+)
+        
+    @ui.button(label="❌ Reject", style=discord.ButtonStyle.red)
+    async def reject(self, i: discord.Interaction, b: ui.Button):
+        # Ambil data sebelum dihapus untuk keperluan informasi di embed
         data = col.find_one({"_id": self.entry_id})
         
         if data:
-            emb = discord.Embed(title="🌟 NEW RECORD RECORDED", color=0x2ecc71)
-            emb.add_field(name="👤 Driver", value=f"**{data['ign']}**", inline=True)
-            emb.add_field(name="🛡️ Club", value=f"{data.get('club', '-')}", inline=True)
-            emb.add_field(name="🆔 Game ID", value=f"{data.get('game_id', '-')}", inline=True)
-            emb.add_field(name="⏱️ Time", value=f"`{data['waktu']}`", inline=False)
-            submitter = data.get('discord_name', 'Unknown').split('#')[0]
-            emb.add_field(name="📥 Submitted by", value=submitter, inline=True)
-            emb.add_field(name="⚖️ Approved by", value=approver, inline=True)
+            # Kita hapus datanya agar slot cooldown peserta reset sepenuhnya
+            col.delete_one({"_id": self.entry_id})
             
-            if "evidence_url" in data:
-                emb.set_image(url=data["evidence_url"])
-                
-            await i.response.edit_message(content=None, embed=emb, view=None)
+            emb_reject = discord.Embed(
+                title="❌ SUBMISSION REJECTED",
+                description=f"Submit dari **{data['ign']}** telah ditolak oleh Admin.",
+                color=0xe74c3c
+            )
+            emb_reject.add_field(name="Admin", value=i.user.display_name)
+            emb_reject.set_footer(text="Silakan submit ulang dengan bukti yang benar.")
+            
+            # Mengubah pesan pending menjadi pesan reject
+            await i.response.edit_message(content=None, embed=emb_reject, view=None)
+        else:
+            await i.response.send_message("Data tidak ditemukan atau sudah diproses.", ephemeral=True)
 
 class LeaderboardView(ui.View):
     def __init__(self, event_name, page=0):
@@ -459,9 +583,9 @@ class MainView(ui.View):
     def __init__(self, event_name, lang_code="en"):
         super().__init__(timeout=None)
         self.event_name = event_name
-        self.lang_code = lang_code # Simpan pilihan bahasa
+        self.lang_code = lang_code
         
-    @ui.button(label="Guide / Panduan / คู่มือ", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
+    @ui.button(label="Guide / Panduan", style=discord.ButtonStyle.grey, custom_id="btn_guide_v5")
     async def guide_btn(self, i: discord.Interaction, b: ui.Button):
         emb = discord.Embed(
             title="📖 HOW TO USE / CARA PENGGUNAAN", 
@@ -486,31 +610,38 @@ class MainView(ui.View):
         emb.add_field(name="🇵🇭 Tagalog", value=ph_msg, inline=False)
         emb.add_field(name="🇲🇾 Bahasa Melayu", value=ms_msg, inline=False)
         
-        await i.response.send_message(embed=emb, ephemeral=True)
+        await i.response.send_message("Menampilkan panduan...", ephemeral=True)
         
     @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_sub_v5")
     async def submit_btn(self, i: discord.Interaction, b: ui.Button):
-        # ... (Logika cooldown tetap sama seperti sebelumnya)
         user_id = i.user.id
         now = datetime.datetime.now()
         cooldown_seconds = 600
         lang = TRANSLATIONS.get(self.lang_code, TRANSLATIONS["en"])
 
+        # Ambil data terakhir user untuk event ini
         last_entry = col.find_one({"user_id": user_id, "event": self.event_name})
         
         if last_entry and "timestamp" in last_entry and not i.user.guild_permissions.administrator:
-            last_submit = last_entry["timestamp"]
-            elapsed = (now - last_submit).total_seconds()
+            # CEK STATUS APPROVAL
+            # Jika status 'approved' adalah True, baru terapkan cooldown.
+            # Jika False (ditolak/pending), izinkan submit ulang tanpa tunggu.
+            is_approved = last_entry.get("approved", False)
+            
+            if is_approved:
+                last_submit = last_entry["timestamp"]
+                elapsed = (now - last_submit).total_seconds()
 
-            if elapsed < cooldown_seconds:
-                rem_m = int((cooldown_seconds - elapsed) // 60)
-                rem_s = int((cooldown_seconds - elapsed) % 60)
-                return await i.response.send_message(
-                    lang["cooldown"].format(rem_m, rem_s), 
-                    ephemeral=True
-                )
+                if elapsed < cooldown_seconds:
+                    rem_m = int((cooldown_seconds - elapsed) // 60)
+                    rem_s = int((cooldown_seconds - elapsed) % 60)
+                    return await i.response.send_message(
+                        lang["cooldown"].format(rem_m, rem_s), 
+                        ephemeral=True
+                    )
         
         # Mengirim modal dengan bahasa yang dipilih
+        # Kirim modal jika lolos pengecekan (atau jika data sebelumnya ditolak)
         await i.response.send_modal(SubmitModal(self.event_name, self.lang_code))
 
     @ui.button(label="Leaderboard", style=discord.ButtonStyle.blurple, custom_id="btn_lb_v5")
@@ -518,6 +649,36 @@ class MainView(ui.View):
         v = LeaderboardView(self.event_name)
         d, p = await v.get_stats()
         await i.response.edit_message(embed=v.create_embed(d, p), view=v)
+
+    @ui.button(label="Check My PB", style=discord.ButtonStyle.secondary, custom_id="btn_mypb_v5")
+    async def my_pb_btn(self, i: discord.Interaction, b: ui.Button):
+        lang = TRANSLATIONS.get(self.lang_code, TRANSLATIONS["en"])
+        data = col.find_one({"user_id": i.user.id, "event": self.event_name, "approved": True})
+        
+        if data:
+            # Hitung Ranking
+            rank = col.count_documents({
+                "event": self.event_name, 
+                "approved": True, 
+                "waktu_raw": {"$lt": data['waktu_raw']}
+            }) + 1
+            
+            emb = discord.Embed(title=f"{lang['pb_title']}: {self.event_name.upper()}", color=0x9b59b6)
+            emb.add_field(name="👤 IGN", value=f"`{data['ign']}`", inline=True)
+            emb.add_field(name=f"🏆 {lang['pb_rank']}", value=f"**#{rank}**", inline=True)
+            emb.add_field(name="⏱️ Time", value=f"`{data['waktu']}`", inline=True)
+            
+            time_str = data['timestamp'].strftime('%Y-%m-%d %H:%M')
+            emb.set_footer(text=lang['pb_footer'].format(time_str))
+            
+            if "evidence_url" in data:
+                emb.set_thumbnail(url=data["evidence_url"])
+                
+            await i.response.send_message(embed=emb, ephemeral=True)
+        else:
+            await i.response.send_message(lang["pb_not_found"], ephemeral=True)
+
+    # ... (Tombol Guide, Submit, Leaderboard, dan Admin tetap ada dengan custom_id) ...
         
     @ui.button(label="Admin Panel", style=discord.ButtonStyle.red, custom_id="btn_adm_v5")
     async def admin_btn(self, i, b):
@@ -547,9 +708,64 @@ async def create_event(ctx):
 
 @bot.event
 async def on_ready():
-    # Persistent views (Tanpa ID bahasa karena default)
-    bot.add_view(MainView(""))
-    print(f">>> OVER-XVI SYSTEM ONLINE <<<")
-    threading.Thread(target=run_web, daemon=True).start()
+    # Pastikan bot mendaftarkan ulang semua view yang ada di database
+    try:
+        active_events = list(events.find())
+        for ev in active_events:
+            # Daftarkan MainView untuk setiap channel event yang aktif
+            # Secara default menggunakan 'en', tapi akan terupdate saat user memilih bahasa di !ta
+            bot.add_view(MainView(event_name=ev['name']))
+        
+        print(f">>> OVER-XVI SYSTEM ONLINE <<<")
+        print(f"Logged in as: {bot.user.name}")
+        print(f"Registered {len(active_events)} event views.")
+        
+    except Exception as e:
+        print(f"Error loading persistent views: {e}")
+
+    if not threading.Thread(target=run_web, daemon=True).is_alive():
+        threading.Thread(target=run_web, daemon=True).start()
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setup_lb(ctx):
+    emb = discord.Embed(title=f"🏆 LIVE LEADERBOARD: {ctx.channel.name.upper()}", description="Menunggu data...", color=0xf1c40f)
+    await ctx.send(embed=emb)
+    await ctx.message.delete()
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def create_event(ctx):
+    guild = ctx.guild
+    event_name = ctx.channel.name
+
+    # 1. Cari atau Buat Kategori Khusus Log (Private)
+    category = discord.utils.get(guild.categories, name="RACE FOR FUN OFFICIAL LOGS")
+    if not category:
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            guild.me: discord.PermissionOverwrite(read_messages=True)
+        }
+        category = await guild.create_category("RACE FOR FUN OFFICIAL LOGS", overwrites=overwrites)
+
+    # 2. Buat Channel Log khusus untuk event ini
+    log_channel_name = f"log-{event_name}"
+    log_channel = discord.utils.get(category.channels, name=log_channel_name)
+    
+    if not log_channel:
+        log_channel = await guild.create_text_channel(log_channel_name, category=category)
+
+    # 3. Simpan ke Database (Nama event & ID Channel Log-nya)
+    events.update_one(
+        {"name": event_name}, 
+        {"$set": {
+            "name": event_name,
+            "log_channel_id": log_channel.id,
+            "created_at": datetime.datetime.now()
+        }}, 
+        upsert=True
+    )
+
+    await ctx.send(f"✅ Event **#{event_name}** aktif!\n🛡️ Log Admin: {log_channel.mention} (Hanya Admin yang bisa lihat)")
 
 bot.run(TOKEN)
