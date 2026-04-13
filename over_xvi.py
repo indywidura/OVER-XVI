@@ -280,10 +280,8 @@ class SubmitModal(ui.Modal):
 
         # Di dalam SubmitModal.on_submit:
         if not detected and not i.user.guild_permissions.administrator:
-        # Jika bot benar-benar gagal baca dan user bukan admin, 
-         # beri peringatan lebih keras sebelum memasukkan ke DB.
-    pass
-        
+            pass # Tambahkan spasi/tab di depan pass agar masuk ke dalam blok if
+            
         try:
             msg = await bot.wait_for(
                 "message", 
