@@ -704,40 +704,7 @@ async def create_event(ctx):
     events.update_one({"name": ctx.channel.name}, {"$set": {"name": ctx.channel.name}}, upsert=True)
     await ctx.send(f"✅ Channel event **#{ctx.channel.name}** sekarang aktif!")
 
-@bot.event
-async def on_ready():
-    # Pastikan bot mendaftarkan ulang semua view yang ada di database
-    try:
-        active_events = list(events.find())
-        for ev in active_events:
-            # Daftarkan MainView untuk setiap channel event yang aktif
-            # Secara default menggunakan 'en', tapi akan terupdate saat user memilih bahasa di !ta
-            bot.add_view(MainView(event_name=ev['name']))
-        
-        print(f">>> OVER-XVI SYSTEM ONLINE <<<")
-        print(f"Logged in as: {bot.user.name}")
-        print(f"Registered {len(active_events)} event views.")
-        
-    except Exception as e:
-        print(f"Error loading persistent views: {e}")
-
-    if not threading.Thread(target=run_web, daemon=True).is_alive():
-        threading.Thread(target=run_web, daemon=True).start()
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setup_lb(ctx):
-    emb = discord.Embed(title=f"🏆 LIVE LEADERBOARD: {ctx.channel.name.upper()}", description="Menunggu data...", color=0xf1c40f)
-    await ctx.send(embed=emb)
-    await ctx.message.delete()
-
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def create_event(ctx):
-    guild = ctx.guild
-    event_name = ctx.channel.name
-
-    # 1. Cari atau Buat Kategori Khusus Log (Private)
+ # 1. Cari atau Buat Kategori Khusus Log (Private)
     category = discord.utils.get(guild.categories, name="RACE FOR FUN OFFICIAL LOGS")
     if not category:
         overwrites = {
@@ -765,5 +732,32 @@ async def create_event(ctx):
     )
 
     await ctx.send(f"✅ Event **#{event_name}** aktif!\n🛡️ Log Admin: {log_channel.mention} (Hanya Admin yang bisa lihat)")
+
+
+@bot.event
+async def on_ready():
+    # Pastikan bot mendaftarkan ulang semua view yang ada di database
+    try:
+        active_events = list(events.find())
+        for ev in active_events:
+            # Daftarkan MainView untuk setiap channel event yang aktif
+            # Secara default menggunakan 'en', tapi akan terupdate saat user memilih bahasa di !ta
+            bot.add_view(MainView(event_name=ev['name']))
+        
+        print(f">>> OVER-XVI SYSTEM ONLINE <<<")
+        print(f"Logged in as: {bot.user.name}")
+        print(f"Registered {len(active_events)} event views.")
+        
+    except Exception as e:
+        print(f"Error loading persistent views: {e}")
+
+    if not threading.Thread(target=run_web, daemon=True).is_alive():
+        threading.Thread(target=run_web, daemon=True).start()
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setup_lb(ctx):
+    emb = discord.Embed(title=f"🏆 LIVE LEADERBOARD: {ctx.channel.name.upper()}", description="Menunggu data...", color=0xf1c40f)
+    await ctx.send(embed=emb)
+    await ctx.message.delete()
 
 bot.run(TOKEN)
