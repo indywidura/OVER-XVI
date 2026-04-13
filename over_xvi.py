@@ -120,7 +120,6 @@ def run_web():
 
 # ================= UTILS & OCR ENGINE =================
 def parse_time(t):
-    """Mengonversi MM:SS.ms ke float detik untuk sorting"""
     if not re.match(r'^\d{2}:\d{2}\.\d{3}$', t): 
         return None
     try:
@@ -131,51 +130,31 @@ def parse_time(t):
         return None
 
 def scan_time(image_bytes):
-    """OCR function dengan optimasi Pre-Processing yang lebih kuat"""
     try:
         img = Image.open(io.BytesIO(image_bytes))
         width, height = img.size
-        
-        # PERBAIKAN CROP: Perlebar sedikit area pencarian (50% lebar, 50% tinggi)
-        # untuk memastikan angka tidak terpotong di berbagai resolusi
-        left = 0
-        top = 0
-        right = width * 0.50 
-        bottom = height * 0.50
-        img_cropped = img.crop((left, top, right, bottom))
-        
-        # PRE-PROCESSING LANJUTAN
-        img_cropped = img_cropped.convert('L') # Grayscale
-        
-        # Optimasi Kontras & Ketajaman
+        # Crop 50% kiri atas
+        img_cropped = img.crop((0, 0, width * 0.50, height * 0.50))
+        img_cropped = img_cropped.convert('L')
         img_cropped = ImageEnhance.Contrast(img_cropped).enhance(3.5)
         img_cropped = ImageEnhance.Sharpness(img_cropped).enhance(2.0)
         
-        # Opsi tambahan: Jika angka berwarna terang di background gelap, 
-        # Tesseract lebih suka angka hitam di background putih (Invert)
+        # Invert hanya jika perlu, Tesseract bekerja baik pada teks hitam background putih
         img_cropped = ImageOps.invert(img_cropped) 
         
-        # OCR Configuration - Gunakan mode PSM 6 atau 7
-        # PSM 7: Menganggap gambar adalah satu baris teks
         custom_config = r'--psm 7 -c tessedit_char_whitelist=0123456789:.'
         text = pytesseract.image_to_string(img_cropped, config=custom_config)
-        
-        # Bersihkan karakter aneh yang sering muncul
         text = text.replace(" ", "").strip()
         
-        # Cari pola MM:SS.ms
         match = re.search(r'\d{2}:\d{2}\.\d{3}', text)
         return match.group(0) if match else None
     except Exception as e:
         print(f"DEBUG OCR ERROR: {e}")
         return None
-        
-# Taruh di bawah fungsi scan_time(image_bytes)
+
 async def update_live_leaderboard(event_name):
-    """Mencari pesan leaderboard di channel event dan mengupdate-nya"""
     channel = discord.utils.get(bot.get_all_channels(), name=event_name)
     if not channel: return
-
     data = list(col.find({"event": event_name, "approved": True}).sort("waktu_raw", 1).limit(10))
     
     description = ""
@@ -189,165 +168,80 @@ async def update_live_leaderboard(event_name):
         color=0xf1c40f,
         timestamp=datetime.datetime.now()
     )
-    emb.set_footer(text="Terupdate otomatis setiap ada persetujuan baru")
-
     async for message in channel.history(limit=50):
         if message.author == bot.user and message.embeds:
             if "LIVE LEADERBOARD" in message.embeds[0].title:
                 await message.edit(embed=emb)
                 return
-
-async def send_audit_log(event_name, action, admin_name, details, color=0x34495e):
-    # Cari info event di database
-    event_info = events.find_one({"name": event_name})
-    if not event_info or "log_channel_id" not in event_info:
-        return
-
-    channel = bot.get_channel(event_info["log_channel_id"])
-    if not channel: return
-    
-    emb = discord.Embed(title=f"🛡️ AUDIT LOG: {event_name.upper()}", color=color, timestamp=datetime.datetime.now())
-    emb.add_field(name="Tindakan", value=f"**{action}**", inline=False)
-    emb.add_field(name="Eksekutor", value=f"👤 {admin_name}", inline=True)
-    emb.add_field(name="Detail", value=details, inline=False)
-    
-    await channel.send(embed=emb)
+                
 # ================= MODAL DIALOGS =================
-class SearchPlayerModal(ui.Modal):
-    """Modal untuk mencari data spesifik driver"""
-    def __init__(self, event_name):
-        super().__init__(title="🔍 Driver Search")
-        self.event_name = event_name
-        self.target = ui.TextInput(label="IGN or Game ID", placeholder="Masukkan nickname atau ID...")
-        self.add_item(self.target)
-
-    async def on_submit(self, i: discord.Interaction):
-        search_val = self.target.value.lower()
-        query = {
-            "event": self.event_name, 
-            "approved": True, 
-            "$or": [
-                {"ign": {"$regex": search_val, "$options": "i"}}, 
-                {"game_id": search_val}
-            ]
-        }
-        found_data = list(col.find(query).sort("waktu_raw", 1).limit(1))
-        
-        if found_data:
-            d = found_data[0]
-            rank = col.count_documents({
-                "event": self.event_name, 
-                "approved": True, 
-                "waktu_raw": {"$lt": d['waktu_raw']}
-            }) + 1
-            
-            emb = discord.Embed(title=f"🔍 DRIVER DATA: {d['ign']}", color=0x3498db)
-            emb.add_field(name="🛡️ Club", value=f"{d.get('club', '-')}", inline=True)
-            emb.add_field(name="🏆 Rank", value=f"**#{rank}**", inline=True)
-            emb.add_field(name="⏱️ Time", value=f"`{d['waktu']}`", inline=True)
-            emb.add_field(name="🆔 Game ID", value=f"{d.get('game_id', '-')}", inline=True)
-            emb.add_field(name="📝 Submitter", value=d.get('discord_name', 'Unknown'), inline=False)
-            emb.add_field(name="⚖️ Approved By", value=d.get('approved_by', 'System'), inline=False)
-            
-            if "evidence_url" in d:
-                emb.set_image(url=d["evidence_url"])
-            
-            await i.response.send_message(embed=emb, ephemeral=True)
-        else:
-            await i.response.send_message(f"❌ Player **{self.target.value}** tidak ditemukan.", ephemeral=True)
-
 class SubmitModal(ui.Modal):
-    """Modal untuk submit waktu baru dengan dukungan multi-bahasa"""
     def __init__(self, event_name, lang_code="en"):
         self.lang = TRANSLATIONS.get(lang_code, TRANSLATIONS["en"])
-        super().__init__(title=f"{self.lang['modal_title']}: {event_name}")
+        super().__init__(title=f"{self.lang['modal_title']}")
         self.event_name = event_name
-        
-        self.ign = ui.TextInput(label=self.lang["ign"], min_length=2, max_length=25)
-        self.club = ui.TextInput(label=self.lang["club"], placeholder="RFF", max_length=20, required=False)
-        self.game_id = ui.TextInput(label=self.lang["id_game"], placeholder="552134")
-        self.time_val = ui.TextInput(label=self.lang["time"], placeholder="01:12.188")
-        
-        for item in [self.ign, self.club, self.game_id, self.time_val]: 
-            self.add_item(item)
+        self.ign = ui.TextInput(label=self.lang["ign"], min_length=2)
+        self.club = ui.TextInput(label=self.lang["club"], default="RFF", required=False)
+        self.game_id = ui.TextInput(label=self.lang["id_game"])
+        self.time_val = ui.TextInput(label=self.lang["time"], placeholder="00:00.000")
+        for item in [self.ign, self.club, self.game_id, self.time_val]: self.add_item(item)
 
     async def on_submit(self, i: discord.Interaction):
         sec = parse_time(self.time_val.value)
-        if not sec: 
+        if not sec:
             return await i.response.send_message(self.lang["invalid_time"], ephemeral=True)
         
+        # Langkah 1: Beri instruksi upload
         await i.response.send_message(self.lang["upload_msg"], ephemeral=True)
 
-        # Di dalam SubmitModal.on_submit:
-        if not detected and not i.user.guild_permissions.administrator:
-            pass # Tambahkan spasi/tab di depan pass agar masuk ke dalam blok if
-            
         try:
+            # Langkah 2: Tunggu Gambar
             msg = await bot.wait_for(
                 "message", 
                 timeout=120, 
                 check=lambda m: m.author.id == i.user.id and m.attachments
             )
             
-            attachment_url = msg.attachments[0].url
             img_bytes = await msg.attachments[0].read()
-
+            # Langkah 3: Jalankan OCR (pindahkan ke loop executor agar tidak freeze)
             loop = asyncio.get_event_loop()
             detected = await loop.run_in_executor(None, scan_time, img_bytes)
 
             is_match = (detected == self.time_val.value)
-            now = datetime.datetime.now()
             
             entry = {
-                "user_id": i.user.id,
-                "discord_name": str(i.user),
-                "event": self.event_name,
-                "ign": self.ign.value,
-                "club": self.club.value,
-                "game_id": self.game_id.value,
-                "waktu": self.time_val.value,
-                "waktu_raw": sec,
-                "evidence_url": attachment_url,
-                "approved": is_match,
-                "timestamp": now
+                "user_id": i.user.id, "discord_name": str(i.user),
+                "event": self.event_name, "ign": self.ign.value,
+                "club": self.club.value, "game_id": self.game_id.value,
+                "waktu": self.time_val.value, "waktu_raw": sec,
+                "evidence_url": msg.attachments[0].url, "approved": is_match,
+                "timestamp": datetime.datetime.now()
             }
             
             col.update_one({"user_id": i.user.id, "event": self.event_name}, {"$set": entry}, upsert=True)
             doc = col.find_one({"user_id": i.user.id, "event": self.event_name})
-            file_img = discord.File(io.BytesIO(img_bytes), filename="evidence.png")
 
+            # Langkah 4: Kirim Hasil ke Channel
             if is_match:
-                emb = discord.Embed(title="🌟 NEW RECORD RECORDED", color=0x2ecc71)
-                emb.add_field(name="👤 Driver", value=f"**{self.ign.value}**", inline=True)
-                emb.add_field(name="🛡️ Club", value=f"{self.club.value}", inline=True)
-                emb.add_field(name="🆔 Game ID", value=f"{self.game_id.value}", inline=True)
-                emb.add_field(name="⏱️ Time", value=f"`{self.time_val.value}`", inline=False)
-                emb.add_field(name="📥 Submitted by", value=f"{i.user.display_name}", inline=True)
-                emb.add_field(name="⚖️ Approved by", value="System (Auto)", inline=True)
-                emb.set_image(url="attachment://evidence.png")
-                await i.channel.send(embed=emb, file=file_img)
+                emb = discord.Embed(title="✅ AUTO APPROVED", color=0x2ecc71)
+                emb.add_field(name="Driver", value=self.ign.value)
+                emb.add_field(name="Time", value=self.time_val.value)
+                emb.set_image(url=msg.attachments[0].url)
+                await i.channel.send(embed=emb)
+                await update_live_leaderboard(self.event_name)
             else:
-                adm_emb = discord.Embed(title="📩 PENDING APPROVAL", color=0xf1c40f)
-                adm_emb.add_field(name="👤 Driver", value=f"**{self.ign.value}**", inline=True)
-                adm_emb.add_field(name="🛡️ Club", value=f"{self.club.value}", inline=True)
-                adm_emb.add_field(name="🆔 Game ID", value=f"{self.game_id.value}", inline=True)
-                adm_emb.add_field(name="⌨️ User Input", value=f"`{self.time_val.value}`", inline=True)
-                adm_emb.add_field(name="🤖 AI Scan", value=f"`{detected or 'Gagal Membaca'}`", inline=True)
-                adm_emb.set_image(url="attachment://evidence.png")
-                await i.channel.send(
-                    content="🔔 **NEW SUBMISSION (MANUAL CHECK REQUIRED):**", 
-                    embed=adm_emb, 
-                    file=file_img, 
-                    view=ApprovalView(doc['_id'])
-                )
+                emb = discord.Embed(title="📩 PENDING APPROVAL", color=0xf1c40f)
+                emb.add_field(name="Input", value=self.time_val.value)
+                emb.add_field(name="AI Scan", value=detected or "Gagal Baca")
+                emb.set_image(url=msg.attachments[0].url)
+                # ApprovalView akan didefinisikan di bagian selanjutnya
+                await i.channel.send(embed=emb, view=ApprovalView(doc['_id']))
             
             await msg.delete()
 
         except asyncio.TimeoutError:
             await i.followup.send(self.lang["timeout"], ephemeral=True)
-        except Exception as e:
-            print(f"Error: {e}")
-
+            
 # ================= INTERACTIVE VIEWS =================
 class ApprovalView(ui.View):
     def __init__(self, entry_id):
@@ -362,18 +256,16 @@ class ApprovalView(ui.View):
     @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
     async def approve(self, i: discord.Interaction, b: ui.Button):
         approver = i.user.display_name
-        
-        # 1. Cari data lama untuk cek Personal Best (PB)
         old_data = col.find_one({"_id": self.entry_id})
+        
         if not old_data:
             return await i.response.send_message("Data tidak ditemukan!", ephemeral=True)
 
-        # Cari rekor terbaik sebelumnya (yang sudah approved)
         pb_data = col.find_one({
             "user_id": old_data["user_id"], 
             "event": old_data["event"], 
             "approved": True,
-            "_id": {"$ne": self.entry_id} # Jangan hitung data yang sedang diproses
+            "_id": {"$ne": self.entry_id}
         })
 
         diff_msg = ""
@@ -384,15 +276,9 @@ class ApprovalView(ui.View):
             elif diff < 0:
                 diff_msg = f"\n⚠️ *Note: Time is slower than current PB (+{abs(diff):.3f}s)*"
 
-        # 2. Update status Approval
         col.update_one({"_id": self.entry_id}, {"$set": {"approved": True, "approved_by": approver}})
         
-        # 3. Kirim Embed Sukses
-        emb = discord.Embed(
-            title="🌟 NEW RECORD RECORDED", 
-            description=f"{diff_msg}", 
-            color=0x2ecc71
-        )
+        emb = discord.Embed(title="🌟 NEW RECORD RECORDED", description=diff_msg, color=0x2ecc71)
         emb.add_field(name="👤 Driver", value=f"**{old_data['ign']}**", inline=True)
         emb.add_field(name="⏱️ Time", value=f"`{old_data['waktu']}`", inline=True)
         emb.add_field(name="⚖️ Approved by", value=approver, inline=True)
@@ -401,158 +287,34 @@ class ApprovalView(ui.View):
             emb.set_image(url=old_data["evidence_url"])
             
         await i.response.edit_message(content=None, embed=emb, view=None)
-        
-        # TRIGGER AUTO-UPDATE LEADERBOARD
         await update_live_leaderboard(old_data["event"])
-
+        
+        # Kirim Log Audit
         await send_audit_log(
-    event_name=old_data["event"],
-    action="MANUAL APPROVAL",
-    admin_name=i.user.display_name,
-    details=f"Pembalap: **{old_data['ign']}**\nWaktu: `{old_data['waktu']}`",
-    color=0x2ecc71
-)
+            event_name=old_data["event"],
+            action="MANUAL APPROVAL",
+            admin_name=i.user.display_name,
+            details=f"Pembalap: **{old_data['ign']}**\nWaktu: `{old_data['waktu']}`",
+            color=0x2ecc71
+        )
         
     @ui.button(label="❌ Reject", style=discord.ButtonStyle.red)
     async def reject(self, i: discord.Interaction, b: ui.Button):
-        # Ambil data sebelum dihapus untuk keperluan informasi di embed
         data = col.find_one({"_id": self.entry_id})
-        
         if data:
-            # Kita hapus datanya agar slot cooldown peserta reset sepenuhnya
             col.delete_one({"_id": self.entry_id})
-            
             emb_reject = discord.Embed(
                 title="❌ SUBMISSION REJECTED",
                 description=f"Submit dari **{data['ign']}** telah ditolak oleh Admin.",
                 color=0xe74c3c
             )
             emb_reject.add_field(name="Admin", value=i.user.display_name)
-            emb_reject.set_footer(text="Silakan submit ulang dengan bukti yang benar.")
-            
-            # Mengubah pesan pending menjadi pesan reject
             await i.response.edit_message(content=None, embed=emb_reject, view=None)
         else:
-            await i.response.send_message("Data tidak ditemukan atau sudah diproses.", ephemeral=True)
+            await i.response.send_message("Data tidak ditemukan.", ephemeral=True)
 
-class LeaderboardView(ui.View):
-    def __init__(self, event_name, page=0):
-        super().__init__(timeout=60)
-        self.event_name = event_name
-        self.page = page
-
-    async def get_stats(self):
-        skip_val = self.page * 10
-        data = list(col.find({"event": self.event_name, "approved": True}).sort("waktu_raw", 1).skip(skip_val).limit(10))
-        total_data = col.count_documents({"event": self.event_name, "approved": True})
-        total_pages = (total_data - 1) // 10 + 1 if total_data else 1
-        return data, total_pages
-
-    def create_embed(self, data, pages):
-        description = ""
-        for idx, d in enumerate(data):
-            rank = (self.page * 10) + idx + 1
-            description += f"**{rank}.** {d['ign']} [{d.get('club', 'RFF')}] - `{d['waktu']}`\n"
-            description += f"└ *Approved by: {d.get('approved_by', 'System')}*\n"
-        
-        emb = discord.Embed(title=f"🏆 LEADERBOARD: {self.event_name.upper()}", 
-                            description=description or "Tidak ada data tersedia.", color=0xf1c40f)
-        emb.set_footer(text=f"Halaman {self.page + 1} dari {pages}")
-        return emb
-
-    @ui.button(label="⬅️", style=discord.ButtonStyle.grey)
-    async def prev(self, i, b):
-        if self.page > 0:
-            self.page -= 1
-            d, p = await self.get_stats()
-            await i.response.edit_message(embed=self.create_embed(d, p), view=self)
-        else: await i.response.defer()
-
-    @ui.button(label="➡️", style=discord.ButtonStyle.grey)
-    async def next(self, i, b):
-        d, p = await self.get_stats()
-        if self.page < p - 1:
-            self.page += 1
-            d, p = await self.get_stats()
-            await i.response.edit_message(embed=self.create_embed(d, p), view=self)
-        else: await i.response.defer()
-
-    @ui.button(label="🔍 Search", style=discord.ButtonStyle.blurple)
-    async def search(self, i, b): 
-        await i.response.send_modal(SearchPlayerModal(self.event_name))
-
-    @ui.button(label="🏠 Home", style=discord.ButtonStyle.green)
-    async def home_btn(self, i, b):
-        emb = discord.Embed(title=f"🏎️ EVENT: {self.event_name.upper()}", color=0x3498db)
-        await i.response.edit_message(embed=emb, view=MainView(self.event_name))
-
-class AdminMenuView(ui.View):
-    def __init__(self, event_name):
-        super().__init__(timeout=60)
-        self.event_name = event_name
-
-    @ui.button(label="📥 Export Excel", style=discord.ButtonStyle.green)
-    async def download(self, i: discord.Interaction, b: ui.Button):
-        await i.response.defer(ephemeral=True)
-        try:
-            data = list(col.find({"event": self.event_name}).sort("waktu_raw", 1))
-            if not data: return await i.followup.send("❌ Tidak ada data untuk di-export.", ephemeral=True)
-            rows = []
-            for idx, d in enumerate(data):
-                rows.append({
-                    "RANK": idx + 1,
-                    "IGN": d.get('ign', '-'),
-                    "CLUB": d.get('club', '-'),
-                    "GAME ID": d.get('game_id', '-'),
-                    "TIME": f"'{d['waktu']}", 
-                    "SUBMITTER": d.get('discord_name', '-'),
-                    "APPROVED BY": d.get('approved_by', 'System')
-                })
-            df = pd.DataFrame(rows)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Data')
-            output.seek(0)
-            await i.followup.send(content="📊 Data Berhasil di-Export:", file=discord.File(fp=output, filename=f"Report_{self.event_name}.xlsx"), ephemeral=True)
-        except Exception as e:
-            await i.followup.send(f"❌ Error: {e}", ephemeral=True)
-
-    @ui.button(label="🚨 Reset All Data", style=discord.ButtonStyle.danger)
-    async def clear(self, i: discord.Interaction, b: ui.Button):
-        confirm_emb = discord.Embed(
-            title="⚠️ KONFIRMASI RESET",
-            description=f"Apakah Anda yakin ingin menghapus **SEMUA** data leaderboard untuk **{self.event_name}**?\n\nTindakan ini tidak bisa dibatalkan!",
-            color=discord.Color.orange()
-        )
-        await i.response.send_message(embed=confirm_emb, view=ConfirmResetView(self.event_name, i.user.name), ephemeral=True)
-
-    @ui.button(label="⬅️ Kembali", style=discord.ButtonStyle.blurple)
-    async def back(self, i: discord.Interaction, b: ui.Button):
-        emb = discord.Embed(title=f"🏎️ EVENT: {self.event_name.upper()}", color=0x3498db)
-        await i.response.edit_message(embed=emb, view=MainView(self.event_name))    
-        
-class ConfirmResetView(ui.View):
-    def __init__(self, event_name, admin_name):
-        super().__init__(timeout=30)
-        self.event_name = event_name
-        self.admin_name = admin_name
-
-    @ui.button(label="YA, HAPUS SEMUA", style=discord.ButtonStyle.danger)
-    async def confirm(self, i: discord.Interaction, b: ui.Button):
-        result = col.delete_many({"event": self.event_name})
-        emb = discord.Embed(
-            title="🚨 LEADERBOARD RESET", 
-            description=f"Semua rekaman untuk event **{self.event_name.upper()}** telah dibersihkan.",
-            color=discord.Color.red(),
-            timestamp=datetime.datetime.now()
-        )
-        emb.add_field(name="Total Terhapus", value=f"{result.deleted_count} rekaman", inline=True)
-        emb.add_field(name="Eksekutor", value=f"🛡️ {self.admin_name}", inline=True)
-        await i.response.edit_message(content=None, embed=emb, view=None)
-
-    @ui.button(label="BATAL", style=discord.ButtonStyle.grey)
-    async def cancel(self, i: discord.Interaction, b: ui.Button):
-        await i.response.edit_message(content="✅ Operasi reset dibatalkan.", embed=None, view=None)
+# Catatan: LeaderboardView dan AdminMenuView memerlukan MainView. 
+# Pastikan MainView didefinisikan sebelum kelas-kelas ini atau gunakan late-binding.
 
 # ================= NEW: LANGUAGE SELECT VIEW =================
 class LanguageSelectView(ui.View):
