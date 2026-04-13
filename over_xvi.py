@@ -208,9 +208,38 @@ class SearchPlayerModal(ui.Modal):
         else:
             await i.response.send_message(f"❌ Player **{self.target.value}** tidak ditemukan.", ephemeral=True)
 
+class RejectReasonModal(ui.Modal): # <--- SEJAJARKAN DENGAN CLASS LAIN (KELUARKAN DARI SUBMITMODAL)
+    def __init__(self, entry_id, user_id, lang_code):
+        self.lang = TRANSLATIONS.get(lang_code, TRANSLATIONS["en"])
+        super().__init__(title=self.lang["reject_button"])
+        self.entry_id = entry_id
+        self.user_id = user_id
+        
+        self.reason = ui.TextInput(
+            label=self.lang["reason_label"],
+            placeholder="E.g. Blurred image / Screenshot buram",
+            required=True
+        )
+        self.add_item(self.reason)
+
+    async def on_submit(self, i: discord.Interaction):
+        col.delete_one({"_id": self.entry_id})
+        try:
+            target_user = await i.client.fetch_user(self.user_id)
+            reject_emb = discord.Embed(title=self.lang["rejected_msg"], color=0xe74c3c)
+            reject_emb.add_field(name="Reason / Alasan", value=self.reason.value)
+            await target_user.send(embed=reject_emb)
+        except:
+            pass 
+
+        final_emb = discord.Embed(title="🚫 SUBMISSION REJECTED", color=0xe74c3c)
+        final_emb.add_field(name="Admin", value=i.user.display_name, inline=True)
+        final_emb.add_field(name="Reason", value=self.reason.value, inline=True)
+        await i.response.edit_message(content=f"🔴 Rejected by {i.user.mention}", embed=final_emb, view=None)
+
 class SubmitModal(ui.Modal):
-    """Modal untuk submit waktu baru dengan dukungan multi-bahasa"""
     def __init__(self, event_name, lang_code="en"):
+        self.lang_code = lang_code # <--- TAMBAHKAN INI AGAR BISA DIPANGGIL DI ON_SUBMIT
         self.lang = TRANSLATIONS.get(lang_code, TRANSLATIONS["en"])
         super().__init__(title=f"{self.lang['modal_title']}: {event_name}")
         self.event_name = event_name
@@ -296,43 +325,6 @@ class SubmitModal(ui.Modal):
             await i.followup.send(self.lang["timeout"], ephemeral=True)
         except Exception as e:
             print(f"Error: {e}")
-
-    class RejectReasonModal(ui.Modal):
-    def __init__(self, entry_id, user_id, lang_code):
-        self.lang = TRANSLATIONS.get(lang_code, TRANSLATIONS["en"])
-        super().__init__(title=self.lang["reject_button"])
-        self.entry_id = entry_id
-        self.user_id = user_id
-        
-        self.reason = ui.TextInput(
-            label=self.lang["reason_label"],
-            placeholder="E.g. Blurred image / Screenshot buram",
-            required=True
-        )
-        self.add_item(self.reason)
-
-    async def on_submit(self, i: discord.Interaction):
-        # Ambil data sebelum dihapus untuk log
-        data = col.find_one({"_id": self.entry_id})
-        
-        # Hapus dari database agar user bisa submit ulang (mengatasi cooldown/duplicate)
-        col.delete_one({"_id": self.entry_id})
-        
-        # Kirim DM ke user sesuai bahasanya
-        try:
-            target_user = await i.client.fetch_user(self.user_id)
-            reject_emb = discord.Embed(title=self.lang["rejected_msg"], color=0xe74c3c)
-            reject_emb.add_field(name="Reason / Alasan", value=self.reason.value)
-            await target_user.send(embed=reject_emb)
-        except:
-            pass # Jika DM tertutup
-
-        # Update pesan di channel
-        final_emb = discord.Embed(title="🚫 SUBMISSION REJECTED", color=0xe74c3c)
-        final_emb.add_field(name="Admin", value=i.user.display_name, inline=True)
-        final_emb.add_field(name="Reason", value=self.reason.value, inline=True)
-        
-        await i.response.edit_message(content=f"🔴 Rejected by {i.user.mention}", embed=final_emb, view=None)
 
 # ================= INTERACTIVE VIEWS =================
 class ApprovalView(ui.View):
