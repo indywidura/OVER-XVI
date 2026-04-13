@@ -541,6 +541,38 @@ class MainView(ui.View):
         emb.add_field(name="🇲🇾 Bahasa Melayu", value=ms_msg, inline=False)
         
         await i.response.send_message(embed=emb, ephemeral=True)
+
+    @ui.button(label="Check My PB", style=discord.ButtonStyle.blurple, custom_id="btn_pb_v5")
+    async def pb_btn(self, i: discord.Interaction, b: ui.Button):
+        # Cari record terbaik user di event ini
+        data = col.find_one(
+            {"user_id": i.user.id, "event": self.event_name, "approved": True}
+        )
+        
+        if not data:
+            return await i.response.send_message(
+                "❌ Kamu belum memiliki record yang disetujui di event ini.", 
+                ephemeral=True
+            )
+            
+        # Hitung posisi rank (opsional)
+        rank = col.count_documents({
+            "event": self.event_name, 
+            "approved": True, 
+            "waktu_raw": {"$lt": data['waktu_raw']}
+        }) + 1
+        
+        emb = discord.Embed(title=f"⏱️ PERSONAL BEST: {i.user.display_name}", color=0x9b59b6)
+        emb.add_field(name="Event", value=self.event_name.upper(), inline=True)
+        emb.add_field(name="Rank", value=f"#{rank}", inline=True)
+        emb.add_field(name="Time", value=f"`{data['waktu']}`", inline=False)
+        emb.add_field(name="IGN", value=data['ign'], inline=True)
+        emb.add_field(name="Club", value=data.get('club', 'RFF'), inline=True)
+        
+        if "evidence_url" in data:
+            emb.set_image(url=data["evidence_url"])
+            
+        await i.response.send_message(embed=emb, ephemeral=True)
         
     @ui.button(label="Submit Time", style=discord.ButtonStyle.green, custom_id="btn_sub_v5")
     async def submit_btn(self, i: discord.Interaction, b: ui.Button):
@@ -601,9 +633,20 @@ async def create_event(ctx):
 
 @bot.event
 async def on_ready():
-    # Persistent views (Tanpa ID bahasa karena default)
-    bot.add_view(MainView(""))
+    # Ambil semua channel yang terdaftar sebagai event dari database
+    active_events = events.find({})
+    
+    for event in active_events:
+        event_name = event['name']
+        # Daftarkan MainView untuk setiap channel event yang aktif
+        # Ini memastikan tombol tetap berfungsi setelah restart
+        bot.add_view(MainView(event_name=event_name))
+        
     print(f">>> OVER-XVI SYSTEM ONLINE <<<")
-    threading.Thread(target=run_web, daemon=True).start()
+    print(f"Registered {events.count_documents({})} active event views.")
+    
+    # Menjalankan Web Server Dashboard
+    if not any(thread.name == "FlaskThread" for thread in threading.enumerate()):
+        threading.Thread(target=run_web, name="FlaskThread", daemon=True).start()
 
 bot.run(TOKEN)
