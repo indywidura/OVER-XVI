@@ -695,16 +695,14 @@ async def ta(ctx):
         description="Please select your language first to continue.\nSilakan pilih bahasa terlebih dahulu.",
         color=0x3498db
     )
-    # Mulai dengan pilihan bahasa
     await ctx.send(embed=emb, view=LanguageSelectView(ctx.channel.name))
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def create_event(ctx):
-    events.update_one({"name": ctx.channel.name}, {"$set": {"name": ctx.channel.name}}, upsert=True)
-    await ctx.send(f"✅ Channel event **#{ctx.channel.name}** sekarang aktif!")
+    guild = ctx.guild
+    event_name = ctx.channel.name
 
- # 1. Cari atau Buat Kategori Khusus Log (Private)
     category = discord.utils.get(guild.categories, name="RACE FOR FUN OFFICIAL LOGS")
     if not category:
         overwrites = {
@@ -713,14 +711,12 @@ async def create_event(ctx):
         }
         category = await guild.create_category("RACE FOR FUN OFFICIAL LOGS", overwrites=overwrites)
 
-    # 2. Buat Channel Log khusus untuk event ini
     log_channel_name = f"log-{event_name}"
     log_channel = discord.utils.get(category.channels, name=log_channel_name)
     
     if not log_channel:
         log_channel = await guild.create_text_channel(log_channel_name, category=category)
 
-    # 3. Simpan ke Database (Nama event & ID Channel Log-nya)
     events.update_one(
         {"name": event_name}, 
         {"$set": {
@@ -731,33 +727,31 @@ async def create_event(ctx):
         upsert=True
     )
 
-    await ctx.send(f"✅ Event **#{event_name}** aktif!\n🛡️ Log Admin: {log_channel.mention} (Hanya Admin yang bisa lihat)")
+    await ctx.send(f"✅ Event **#{event_name}** aktif!\n🛡️ Log Admin: {log_channel.mention}")
 
-
-@bot.event
-async def on_ready():
-    # Pastikan bot mendaftarkan ulang semua view yang ada di database
-    try:
-        active_events = list(events.find())
-        for ev in active_events:
-            # Daftarkan MainView untuk setiap channel event yang aktif
-            # Secara default menggunakan 'en', tapi akan terupdate saat user memilih bahasa di !ta
-            bot.add_view(MainView(event_name=ev['name']))
-        
-        print(f">>> OVER-XVI SYSTEM ONLINE <<<")
-        print(f"Logged in as: {bot.user.name}")
-        print(f"Registered {len(active_events)} event views.")
-        
-    except Exception as e:
-        print(f"Error loading persistent views: {e}")
-
-    if not threading.Thread(target=run_web, daemon=True).is_alive():
-        threading.Thread(target=run_web, daemon=True).start()
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setup_lb(ctx):
     emb = discord.Embed(title=f"🏆 LIVE LEADERBOARD: {ctx.channel.name.upper()}", description="Menunggu data...", color=0xf1c40f)
     await ctx.send(embed=emb)
     await ctx.message.delete()
+
+@bot.event
+async def on_ready():
+    try:
+        active_events = list(events.find())
+        for ev in active_events:
+            name = ev.get('name')
+            if name:
+                bot.add_view(MainView(event_name=name))
+        
+        print(f">>> OVER-XVI SYSTEM ONLINE <<<")
+        print(f"Logged in as: {bot.user.name}")
+        print(f"Loaded {len(active_events)} active events.")
+    except Exception as e:
+        print(f"Error loading persistent views: {e}")
+
+    if not any(t.name == "FlaskThread" for t in threading.enumerate()):
+        threading.Thread(target=run_web, name="FlaskThread", daemon=True).start()
 
 bot.run(TOKEN)
