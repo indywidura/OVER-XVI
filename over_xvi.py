@@ -248,14 +248,14 @@ class SubmitModal(ui.Modal):
             
             entry = {
                 "user_id": i.user.id,
-                "lang_code": self.lang_code
                 "discord_name": str(i.user),
                 "event": self.event_name,
                 "ign": self.ign.value,
                 "club": self.club.value,
                 "game_id": self.game_id.value,
                 "waktu": self.time_val.value,
-                "waktu_raw": sec,
+                "waktu_raw": sec,  # <--- SEKARANG SUDAH BENAR
+                "lang_code": self.lang_code,
                 "evidence_url": attachment_url,
                 "approved": is_match,
                 "timestamp": now
