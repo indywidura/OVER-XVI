@@ -34,7 +34,10 @@ TRANSLATIONS = {
         "invalid_time": "❌ Format Salah! Gunakan **MM:SS.ms**",
         "upload_msg": "📸 Silakan upload screenshot bukti sekarang...",
         "timeout": "❌ Waktu habis! Anda tidak mengupload gambar.",
-        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSilakan tunggu **{}m {}s**."
+        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSilakan tunggu **{}m {}s**.",
+        "rejected_msg": "❌ **Submission Anda Ditolak**",
+        "reason_label": "Alasan Penolakan",
+        "reject_button": "Tolak",
     },
     "en": {
         "modal_title": "Submit Time",
@@ -45,7 +48,10 @@ TRANSLATIONS = {
         "invalid_time": "❌ Invalid Format! Use **MM:SS.ms**",
         "upload_msg": "📸 Please upload screenshot evidence now...",
         "timeout": "❌ Timeout! No image uploaded.",
-        "cooldown": "⏳ **COOLDOWN ACTIVE!**\nPlease wait **{}m {}s**."
+        "cooldown": "⏳ **COOLDOWN ACTIVE!**\nPlease wait **{}m {}s**.",
+        "rejected_msg": "❌ **Your Submission was Rejected**",
+        "reason_label": "Reason for Rejection",
+        "reject_button": "Reject",
     },
     "th": {
         "modal_title": "ส่งเวลา",
@@ -56,7 +62,10 @@ TRANSLATIONS = {
         "invalid_time": "❌ รูปแบบไม่ถูกต้อง! ใช้ **MM:SS.ms**",
         "upload_msg": "📸 กรุณาอัปโหลดภาพหน้าจอหลักฐานตอนนี้...",
         "timeout": "❌ หมดเวลา! ไม่มีการอัปโหลดภาพ",
-        "cooldown": "⏳ **คูลดาวน์ทำงาน!**\nกรุณารอ **{}น {}ว**."
+        "cooldown": "⏳ **คูลดาวน์ทำงาน!**\nกรุณารอ **{}น {}ว**.",
+        "rejected_msg": "❌ **การส่งข้อมูลของคุณถูกปฏิเสธ**",
+        "reason_label": "เหตุผลในการปฏิเสธ",
+        "reject_button": "ปฏิเสธ",
     },
     "ph": {
         "modal_title": "I-submit ang Oras",
@@ -67,7 +76,10 @@ TRANSLATIONS = {
         "invalid_time": "❌ Maling Format! Gamitin ang **MM:SS.ms**",
         "upload_msg": "📸 Mangyaring i-upload ang screenshot ngayon...",
         "timeout": "❌ Ubos na ang oras! Walang na-upload na larawan.",
-        "cooldown": "⏳ **COOLDOWN AKTIBO!**\nMaghintay ng **{}m {}s**."
+        "cooldown": "⏳ **COOLDOWN AKTIBO!**\nMaghintay ng **{}m {}s**.",
+        "rejected_msg": "❌ **Ang iyong Submission ay Tinanggihan**",
+        "reason_label": "Dahilan ng Pagtanggi",
+        "reject_button": "Tanggihan",
     },
     "ms": {
         "modal_title": "Hantar Masa",
@@ -78,7 +90,10 @@ TRANSLATIONS = {
         "invalid_time": "❌ Format Salah! Gunakan **MM:SS.ms**",
         "upload_msg": "📸 Sila muat naik tangkapan skrin sekarang...",
         "timeout": "❌ Masa tamat! Tiada gambar dimuat naik.",
-        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSila tunggu **{}m {}s**."
+        "cooldown": "⏳ **COOLDOWN AKTIF!**\nSila tunggu **{}m {}s**.",
+        "rejected_msg": "❌ **Hantaran Anda Telah Ditolak**",
+        "reason_label": "Sebab Penolakan",
+        "reject_button": "Tolak",
     }
 }
 
@@ -233,6 +248,7 @@ class SubmitModal(ui.Modal):
             
             entry = {
                 "user_id": i.user.id,
+                "lang_code": self.lang_code
                 "discord_name": str(i.user),
                 "event": self.event_name,
                 "ign": self.ign.value,
@@ -281,15 +297,52 @@ class SubmitModal(ui.Modal):
         except Exception as e:
             print(f"Error: {e}")
 
+    class RejectReasonModal(ui.Modal):
+    def __init__(self, entry_id, user_id, lang_code):
+        self.lang = TRANSLATIONS.get(lang_code, TRANSLATIONS["en"])
+        super().__init__(title=self.lang["reject_button"])
+        self.entry_id = entry_id
+        self.user_id = user_id
+        
+        self.reason = ui.TextInput(
+            label=self.lang["reason_label"],
+            placeholder="E.g. Blurred image / Screenshot buram",
+            required=True
+        )
+        self.add_item(self.reason)
+
+    async def on_submit(self, i: discord.Interaction):
+        # Ambil data sebelum dihapus untuk log
+        data = col.find_one({"_id": self.entry_id})
+        
+        # Hapus dari database agar user bisa submit ulang (mengatasi cooldown/duplicate)
+        col.delete_one({"_id": self.entry_id})
+        
+        # Kirim DM ke user sesuai bahasanya
+        try:
+            target_user = await i.client.fetch_user(self.user_id)
+            reject_emb = discord.Embed(title=self.lang["rejected_msg"], color=0xe74c3c)
+            reject_emb.add_field(name="Reason / Alasan", value=self.reason.value)
+            await target_user.send(embed=reject_emb)
+        except:
+            pass # Jika DM tertutup
+
+        # Update pesan di channel
+        final_emb = discord.Embed(title="🚫 SUBMISSION REJECTED", color=0xe74c3c)
+        final_emb.add_field(name="Admin", value=i.user.display_name, inline=True)
+        final_emb.add_field(name="Reason", value=self.reason.value, inline=True)
+        
+        await i.response.edit_message(content=f"🔴 Rejected by {i.user.mention}", embed=final_emb, view=None)
+
 # ================= INTERACTIVE VIEWS =================
 class ApprovalView(ui.View):
     def __init__(self, entry_id):
         super().__init__(timeout=None)
         self.entry_id = entry_id
-        
+
     async def interaction_check(self, i: discord.Interaction):
         if i.user.guild_permissions.administrator: return True
-        await i.response.send_message("❌ Akses khusus Administrator!", ephemeral=True)
+        await i.response.send_message("❌ Admin Only!", ephemeral=True)
         return False
 
     @ui.button(label="✅ Approve", style=discord.ButtonStyle.green)
@@ -312,6 +365,15 @@ class ApprovalView(ui.View):
                 emb.set_image(url=data["evidence_url"])
                 
             await i.response.edit_message(content=None, embed=emb, view=None)
+            pass
+            
+    @ui.button(label="❌ Reject", style=discord.ButtonStyle.red)
+    async def reject(self, i: discord.Interaction, b: ui.Button):
+        data = col.find_one({"_id": self.entry_id})
+        if not data:
+            return await i.response.send_message("Data not found!", ephemeral=True)
+        lang_code = data.get("lang_code", "en")
+        await i.response.send_modal(RejectReasonModal(self.entry_id, data['user_id'], lang_code))
 
 class LeaderboardView(ui.View):
     def __init__(self, event_name, page=0):
