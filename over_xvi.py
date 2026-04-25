@@ -486,7 +486,7 @@ class AdminMenuView(ui.View):
         except Exception as e:
             await i.followup.send(f"❌ Error: {e}", ephemeral=True)
 
-    @ui.button(label="👤 Hapus Player", style=discord.ButtonStyle.secondary) # Tombol Baru
+    @ui.button(label="👤 DELETE Player", style=discord.ButtonStyle.secondary) # Tombol Baru
     async def delete_player(self, i: discord.Interaction, b: ui.Button):
         await i.response.send_modal(DeletePlayerModal(self.event_name))
 
