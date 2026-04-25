@@ -237,6 +237,43 @@ class RejectReasonModal(ui.Modal): # <--- SEJAJARKAN DENGAN CLASS LAIN (KELUARKA
         final_emb.add_field(name="Reason", value=self.reason.value, inline=True)
         await i.response.edit_message(content=f"🔴 Rejected by {i.user.mention}", embed=final_emb, view=None)
 
+class DeletePlayerModal(ui.Modal):
+    def __init__(self, event_name):
+        super().__init__(title="🚨 Hapus Data Player")
+        self.event_name = event_name
+        self.target = ui.TextInput(
+            label="IGN atau Game ID", 
+            placeholder="Masukkan data yang ingin dihapus...",
+            required=True
+        )
+        self.add_item(self.target)
+
+    async def on_submit(self, i: discord.Interaction):
+        search_val = self.target.value
+        # Mencari data berdasarkan IGN (case insensitive) atau Game ID
+        query = {
+            "event": self.event_name,
+            "$or": [
+                {"ign": {"$regex": f"^{re.escape(search_val)}$", "$options": "i"}},
+                {"game_id": search_val}
+            ]
+        }
+        
+        # Cek apakah data ada sebelum dihapus
+        target_data = col.find_one(query)
+        
+        if target_data:
+            col.delete_one({"_id": target_data["_id"]})
+            await i.response.send_message(
+                f"✅ Berhasil menghapus data player: **{target_data['ign']}** dari event **{self.event_name}**.", 
+                ephemeral=True
+            )
+        else:
+            await i.response.send_message(
+                f"❌ Player **{search_val}** tidak ditemukan di event ini.", 
+                ephemeral=True
+            )
+
 class SubmitModal(ui.Modal):
     def __init__(self, event_name, lang_code="en"):
         self.lang_code = lang_code # <--- TAMBAHKAN INI AGAR BISA DIPANGGIL DI ON_SUBMIT
@@ -448,6 +485,10 @@ class AdminMenuView(ui.View):
             await i.followup.send(content="📊 Data Berhasil di-Export:", file=discord.File(fp=output, filename=f"Report_{self.event_name}.xlsx"), ephemeral=True)
         except Exception as e:
             await i.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+    @ui.button(label="👤 Hapus Player", style=discord.ButtonStyle.secondary) # Tombol Baru
+    async def delete_player(self, i: discord.Interaction, b: ui.Button):
+        await i.response.send_modal(DeletePlayerModal(self.event_name))
 
     @ui.button(label="🚨 Reset All Data", style=discord.ButtonStyle.danger)
     async def clear(self, i: discord.Interaction, b: ui.Button):
